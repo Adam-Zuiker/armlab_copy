@@ -25,7 +25,7 @@ except Exception as _exc:
     _LCM_AVAILABLE = False  # any import failure should just disable replay
     _LCM_IMPORT_ERROR = _exc
 
-XARM_IP = "192.168.1.150"  # TODO: replace this with your station's arm IP
+XARM_IP = "192.168.1.184"  # Current arm IP
 JOINT_NAMES = ("Base", "Shoulder", "Elbow", "F.Roll", "W.Pitch", "W.Roll")
 
 LCM_STATE_CHANNEL = "ufactory_lite6_state"  # must match mujoco_sim bridge.topic_state

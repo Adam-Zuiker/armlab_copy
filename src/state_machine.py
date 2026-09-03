@@ -4,7 +4,8 @@ State machine for the arm lab runtime shell.
 import time
 
 from PyQt5.QtCore import QThread, pyqtSignal
-
+# import lite6arm
+import numpy as np
 
 class StateMachine:
 
@@ -26,6 +27,8 @@ class StateMachine:
             "direct_control":    self.direct_control,
             "pick_place":        self.pick_place,
         }
+
+        self.waypoints = []
 
     def set_next_state(self, state):
         self.next_state = state
@@ -86,15 +89,29 @@ class StateMachine:
         # (e.g. WP: arm at grasp position, gripper open -> next WP: same position, gripper closed).
         # Playback executes each waypoint sequentially: move joints first, then apply gripper state.
         self._go_idle("Student lab: implement add_waypoint() - record joint angles + gripper state.")
+        
 
     def clear_waypoints(self):
         # TODO: student lab
-        self._go_idle("Student lab: implement clear_waypoints() - erase all recorded waypoints.")
+        # self._go_idle("Student lab: implement clear_waypoints() - erase all recorded waypoints.")
+        self.waypoints.clear()
+
 
     def playback_waypoints(self):
         # TODO: student lab
         # For each waypoint: move to joint angles (wait), then apply gripper state (wait), then advance.
-        self._go_idle("Student lab: implement playback_waypoints() - replay waypoints in order.")
+        # self._go_idle("Student lab: implement playback_waypoints() - replay waypoints in order.")
+
+        self.waypoints = [np.deg2rad([0.0, 9.9, 31.8, 0.0, 21.9, 0.0]).tolist(),
+                          np.deg2rad([0.0, 9.9, 36.8, 0.0, 25.9, 0.0]).tolist(),
+                          np.deg2rad([0.0, 9.9, 40.8, 0.0, 30.9, 0.0]).tolist(),
+                          np.deg2rad([0.0, 9.9, 36.8, 0.0, 36.9, 0.0]).tolist()]
+
+        for waypoint in self.waypoints:
+            self.arm.set_joint_angles(waypoint[:6])
+            # if waypoint[6] == 0:
+            #     self.arm.
+        self._go_idle("finished!")
 
     def pick_place(self):
         # TODO: student lab
