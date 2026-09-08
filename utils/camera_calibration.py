@@ -34,9 +34,9 @@ from PyQt5.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMainWindow,
 # ---------------------------------------------------------------------------
 # Checkerboard - EDIT THESE to match your printed target
 # ---------------------------------------------------------------------------
-BOARD_COLS = 9        # inner corners across (a 10-square-wide board has 9)
-BOARD_ROWS = 6        # inner corners down   (a  7-square-tall board has 6)
-SQUARE_MM = 25.0      # measure one printed square with calipers
+BOARD_COLS = 6        # inner corners across (a 10-square-wide board has 9)
+BOARD_ROWS = 7        # inner corners down   (a  7-square-tall board has 6)
+SQUARE_MM = 24.8      # measure one printed square with calipers
 
 # ---------------------------------------------------------------------------
 # Camera stream - match what the control station uses
