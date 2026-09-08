@@ -46,7 +46,7 @@ class Lite6Arm:
         self.speed_pct = 20.0
         self.mvacc_rad_s2 = 10.0
         self.xarm = None
-
+        self.gripper_state = 0
         try:
             self.xarm = XArmAPI(ip, is_radian=True) # all input/output angles in radian
             self.connected = True
@@ -195,6 +195,7 @@ class Lite6Arm:
         if not self.connected:
             return
         code = self.xarm.open_lite6_gripper(sync=sync)
+        self.gripper_state = 0
         if code != 0:
             print(f"WARNING: open_lite6_gripper failed (code={code})")
         elif wait:
@@ -205,6 +206,7 @@ class Lite6Arm:
         if not self.connected:
             return
         code = self.xarm.close_lite6_gripper(sync=sync)
+        self.gripper_state = 1
         if code != 0:
             print(f"WARNING: close_lite6_gripper failed (code={code})")
         elif wait:

@@ -88,7 +88,16 @@ class StateMachine:
         # Two consecutive waypoints can have identical joint angles but different gripper states
         # (e.g. WP: arm at grasp position, gripper open -> next WP: same position, gripper closed).
         # Playback executes each waypoint sequentially: move joints first, then apply gripper state.
-        self._go_idle("Student lab: implement add_waypoint() - record joint angles + gripper state.")
+        # self._go_idle("Student lab: implement add_waypoint() - record joint angles + gripper state.")
+        curr_joint_angles = self.arm.get_joint_angles()
+        curr_gripper_state = self.arm.gripper_state
+
+        curr_joint_angles.append(curr_gripper_state)
+
+        self.waypoints.append(curr_joint_angles)
+        print(curr_joint_angles)
+        self._go_idle("waypoint appended")
+        
         
 
     def clear_waypoints(self):
@@ -102,13 +111,21 @@ class StateMachine:
         # For each waypoint: move to joint angles (wait), then apply gripper state (wait), then advance.
         # self._go_idle("Student lab: implement playback_waypoints() - replay waypoints in order.")
 
-        self.waypoints = [np.deg2rad([0.0, 9.9, 31.8, 0.0, 21.9, 0.0]).tolist(),
-                          np.deg2rad([0.0, 9.9, 36.8, 0.0, 25.9, 0.0]).tolist(),
-                          np.deg2rad([0.0, 9.9, 40.8, 0.0, 30.9, 0.0]).tolist(),
-                          np.deg2rad([0.0, 9.9, 36.8, 0.0, 36.9, 0.0]).tolist()]
+        # self.waypoints = [np.deg2rad([0.0, 9.9, 31.8, 0.0, 21.9, 0.0]).tolist(),
+        #                   np.deg2rad([0.0, 9.9, 36.8, 0.0, 25.9, 0.0]).tolist(),
+        #                   np.deg2rad([0.0, 9.9, 40.8, 0.0, 30.9, 0.0]).tolist(),
+        #                   np.deg2rad([0.0, 9.9, 36.8, 0.0, 36.9, 0.0]).tolist()]
 
         for waypoint in self.waypoints:
             self.arm.set_joint_angles(waypoint[:6])
+            if self.arm.gripper_state != waypoint[6]:
+                if waypoint[6] == 0:
+                    self.arm.open_gripper()
+                    time.sleep(3)
+                else:
+                    self.arm.close_gripper()
+                    time.sleep(3)
+            
             # if waypoint[6] == 0:
             #     self.arm.
         self._go_idle("finished!")
