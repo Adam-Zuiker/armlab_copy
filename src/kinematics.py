@@ -2,8 +2,8 @@
 Kinematics for the UFactory Lite 6.
 
 TODO: Implement all functions marked with TODO below.
-      For FK, implement either the DH method or the PoX method (your choice).
-      For IK, implement IK_geometric.
+      For FK, implement both the DH method and the PoX method.
+      For IK, implement IK_geometric and IK_numerical.
 """
 
 import numpy as np
