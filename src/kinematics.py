@@ -18,12 +18,12 @@ from scipy.optimize import least_squares
 # Standard DH parameters for the UFactory Lite 6: https://docs.supportarticle.ufactory.cc/support_articles/developer/kinematic-and-dynamic-parameters/lite6.html
 # One row per joint: [theta_offset (rad), d (mm), alpha (rad), a (mm)]
 DH_STD = np.array([
-    [0.0, 0.0, 0.0, 0.0], # TODO: student lab
-    [0.0, 0.0, 0.0, 0.0],
-    [0.0, 0.0, 0.0, 0.0],
-    [0.0, 0.0, 0.0, 0.0],
-    [0.0, 0.0, 0.0, 0.0],
-    [0.0, 0.0, 0.0, 0.0],
+    [0.0, 243.3, -90.0, 0.0], # TODO: student lab
+    [-90.0, 0.0, 180.0, 200.0],
+    [-90.0, 0.0, 90.0, 87.0],
+    [0.0, 227.6, 90.0, 0.0],
+    [0.0, 0.0, -90.0, 0.0],
+    [0.0, 61.5, 0.0, 0.0],
 ], dtype=float)
 
 # Lite 6 joint travel limits, matching the MuJoCo model
@@ -52,8 +52,35 @@ def get_transform_from_dh(theta_offset, d, alpha, a, joint_angle):
         theta_offset (rad), d (mm), alpha (rad), a (mm)
     joint_angle: current joint angle in radians.
     """
-    # TODO: student lab
-    pass
+
+    theta = theta_offset + joint_angle
+
+    rot_x = np.array([
+            [1, 0, 0, 0],
+            [0, np.cos(alpha),-np.sin(alpha), 0],
+            [0, np.sin(alpha), np.cos(alpha), 0],
+            [0, 0, 0,1 ],
+        ])
+    rot_z = np.array([
+            [np.cos(theta), -np.sin(theta), 0, 0],
+            [np.sin(theta), np.cos(theta), 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1],
+        ])
+    trans_x = np.array([
+            [1, 0, 0, a],
+            [0, 1, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1],
+        ])
+    trans_z = np.array([
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 1, 0, d]
+            [0, 0, 0, 1],
+        ])
+    
+    return rot_z @ trans_z @ trans_x @ rot_x
 
 
 def FK_dh(dh_params, joint_angles_rad, num_joints):
