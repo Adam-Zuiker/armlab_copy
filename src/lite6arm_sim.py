@@ -355,8 +355,8 @@ class SimArm:
         # Student FK: base -> EE pose (mm, rad) from the latest joint angles.
         if self.dh_params is None:
             return [0.0] * 6
-        # T = FK_dh(self.dh_params, self.joint_angles, self.num_joints)  # DH method
-        T = FK_pox(self.joint_angles, M, S_list)                         # PoX method
+        T = FK_dh(self.dh_params, self.joint_angles, self.num_joints)  # DH method
+        # T = FK_pox(self.joint_angles, M, S_list)                         # PoX method
         if T is None:
             return [0.0] * 6
         return get_pose_from_T(T)

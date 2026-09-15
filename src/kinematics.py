@@ -9,6 +9,7 @@ TODO: Implement all functions marked with TODO below.
 import numpy as np
 from scipy.linalg import expm
 from scipy.optimize import least_squares
+from scipy.spatial.transform import Rotation as R
 
 
 # ======================================================================
@@ -18,11 +19,11 @@ from scipy.optimize import least_squares
 # Standard DH parameters for the UFactory Lite 6: https://docs.supportarticle.ufactory.cc/support_articles/developer/kinematic-and-dynamic-parameters/lite6.html
 # One row per joint: [theta_offset (rad), d (mm), alpha (rad), a (mm)]
 DH_STD = np.array([
-    [0.0, 243.3, -90.0, 0.0], # TODO: student lab
-    [-90.0, 0.0, 180.0, 200.0],
-    [-90.0, 0.0, 90.0, 87.0],
-    [0.0, 227.6, 90.0, 0.0],
-    [0.0, 0.0, -90.0, 0.0],
+    [0.0, 243.3, np.deg2rad(-90.0), 0.0], # TODO: student lab
+    [np.deg2rad(-90.0), 0.0, np.deg2rad(180.0), 200.0],
+    [np.deg2rad(-90.0), 0.0, np.deg2rad(90.0), 87.0],
+    [0.0, 227.6, np.deg2rad(90.0), 0.0],
+    [0.0, 0.0, np.deg2rad(-90.0), 0.0],
     [0.0, 61.5, 0.0, 0.0],
 ], dtype=float)
 
@@ -76,7 +77,7 @@ def get_transform_from_dh(theta_offset, d, alpha, a, joint_angle):
     trans_z = np.array([
             [1, 0, 0, 0],
             [0, 1, 0, 0],
-            [0, 1, 0, d]
+            [0, 0, 1, d],
             [0, 0, 0, 1],
         ])
     
@@ -96,8 +97,18 @@ def FK_dh(dh_params, joint_angles_rad, num_joints):
 
     Returns 4x4 homogeneous transform (base -> end-effector).
     """
-    # TODO: student lab
-    pass
+    
+    H = np.eye(4)
+    for i, (theta, d, alpha, a) in enumerate(dh_params):
+
+        # breakpoint()
+        current_joint_angle = joint_angles_rad[i]
+        H_temp = get_transform_from_dh(theta, d, alpha, a, current_joint_angle)
+        H = H @ H_temp
+
+    return H
+
+
 
 
 # ======================================================================
@@ -166,8 +177,14 @@ def get_pose_from_T(T):
 
     Used by both FK_dh and FK_pox to produce the pose vector for the GUI.
     """
-    # TODO: student lab
-    return [0, 0, 0, 0, 0, 0]
+
+    Rotation_mat = T[:3, :3]
+    translation_vec = T[:3, 3]
+
+    rot = R.from_matrix(Rotation_mat)
+    roll, pitch, yaw = rot.as_euler('xyz')
+
+    return [translation_vec[0], translation_vec[1], translation_vec[2], roll, pitch, yaw]
 
 
 # ======================================================================
