@@ -24,10 +24,10 @@ WORKSPACE_MARGIN_MM = 50.0
 # Students can adjust these for their physical station.
 # TODO: student lab - adjust thest to match new workspace tag locations.
 TAG_WORLD_POINTS = {
-    1: (0.0,  250.0, 0.0),
-    2: (0.0, -250.0, 0.0),
-    3: (300.0, -250.0, 0.0),
-    4: (300.0, 250.0, 0.0),
+    1: (100.0,  300.0, 0.0),
+    2: (100.0, -300.0, 0.0),
+    3: (400.0, -300.0, 0.0),
+    4: (400.0, 300.0, 0.0),
 }
 
 class Camera:
@@ -149,6 +149,20 @@ class Camera:
         # TODO: student lab
         self.tag_image_frame = self.video_frame.copy()
 
+        # uncomment this for task 2.5
+        # self.estimate_extrinsics_from_tags()
+
+        for detection_obj in self.tag_detections:
+
+            # breakpoint()
+            cv2.drawMarker(self.tag_image_frame, [int(i) for i in detection_obj.center], [0, 255, 0], markerSize=30, thickness=2)
+            # cv2.line(self.tag_image_frame, test[0], test[1], color=[0, 255, 0], thickness=2)
+            # breakpoint()
+            cv2.polylines(self.tag_image_frame, [detection_obj.corners.astype(int)], isClosed=True, color=[0, 255, 0], thickness=2)
+            cv2.putText(self.tag_image_frame, str(detection_obj.tag_id), detection_obj.corners[0].astype(int), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.0 ,color=[255, 0, 0], thickness=2)
+
+        # breakpoint()
+
     def estimate_extrinsics_from_tags(self):
         """
         Uses AprilTag centers and known world-frame tag locations to estimate a
@@ -158,8 +172,31 @@ class Camera:
         if not self.camera_connected:
             return False, "Camera offline - cannot calibrate."
 
+        centers = []
         # TODO: student lab
-        return False, "Student lab: implement estimate_extrinsics_from_tags()."
+        for detection_obj in self.tag_detections:
+            centers.append(detection_obj.center)
+
+        _, rot_vec, trans_vec = cv2.solvePnP(np.array(list(TAG_WORLD_POINTS.values())), np.array(centers), self.intrinsic_matrix, distCoeffs=None)
+        rot_matrix, _ = cv2.Rodrigues(rot_vec)
+
+        # breakpoint()
+
+        extr_matrix = np.eye(4)
+
+        for i in range(len(rot_matrix)):
+            extr_matrix[i] = np.append(rot_matrix[i], trans_vec[i])
+
+        self.extrinsic_matrix = np.linalg.inv(extr_matrix)
+        self.extrinsic_matrix_inv = extr_matrix
+        self.camera_calibrated = True
+
+        # breakpoint()
+
+        return True, "Camera successfully calibrated"
+
+
+
 
     def depth_to_camera_point(self, x, y, depth_raw):
         """Convert an image pixel + raw depth unit to a camera-frame 3D point (mm)."""
@@ -278,6 +315,8 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     camera = Camera()
     print(f"Intrinsic matrix:\n{camera.intrinsic_matrix}")
+
+    # camera.estimate_extrinsics_from_tags()
 
     wins = {}
     for title in ("RGB", "Depth", "Tags", "Workspace"):
