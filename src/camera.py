@@ -116,6 +116,8 @@ class Camera:
 
             self._pipeline_running = True
             self.camera_connected = True
+
+            # self.estimate_extrinsics_from_tags()
         except RuntimeError as exc:
             print(
                 f"WARNING: Camera unavailable ({exc})\n"
@@ -177,6 +179,8 @@ class Camera:
         for detection_obj in self.tag_detections:
             centers.append(detection_obj.center)
 
+        # breakpoint()
+
         _, rot_vec, trans_vec = cv2.solvePnP(np.array(list(TAG_WORLD_POINTS.values())), np.array(centers), self.intrinsic_matrix, distCoeffs=None)
         rot_matrix, _ = cv2.Rodrigues(rot_vec)
 
@@ -200,18 +204,30 @@ class Camera:
 
     def depth_to_camera_point(self, x, y, depth_raw):
         """Convert an image pixel + raw depth unit to a camera-frame 3D point (mm)."""
-        # TODO: student lab
-        return None
+        fx = self.intrinsic_matrix[0][0]
+        fy = self.intrinsic_matrix[1][1]
+        cx = self.intrinsic_matrix[0][2]
+        cy = self.intrinsic_matrix[1][2]
+        Z = depth_raw[y][x] * self.depth_scale_mm
+        X = (x - cx) * Z / fx
+        Y = (y- cy) * Z / fy
+        # breakpoint()
+        print(f"X: {X}, Y: {Y}, Z: {Z}")
+        
+        return np.array([X, Y, Z])
 
     def camera_to_world(self, camera_point):
         """Convert a camera-frame 3D point to a world-frame 3D point."""
-        # TODO: student lab
-        return None
+        one = np.array([1])
+        # breakpoint()
+        # 
+        self.estimate_extrinsics_from_tags()
+        # print(self.camera_calibrated)
+        return self.extrinsic_matrix @ np.concatenate((camera_point, one))
 
     def image_to_world(self, x, y):
         """Pixel (x, y) -> world-frame (X, Y, Z) in mm using live depth."""
-        # TODO: student lab
-        return None
+        return self.camera_to_world(self.depth_to_camera_point(x, y, self.depth_frame_raw))
 
     def workspace_pixel_to_image(self, x_px, y_px):
         """Map a workspace-view pixel back to the original image pixel."""
@@ -224,10 +240,34 @@ class Camera:
         self.workspace_homography_inv = None
         # TODO: student lab
 
+        source_readings = []
+        for detection_obj in self.tag_detections:
+            source_readings.append(detection_obj.center)
+
+        destinations = [[380, 190], 
+                        [950, 190],
+                        [950, 475],
+                        [380, 475] ]
+
+        H, _ = cv2.findHomography(source_readings, destinations)
+
+        self.H = H
+        self.H_inverse = np.linalg.inv(H)
+
+        
+
+        
+
+        
+
     def update_workspace_frame(self):
         """Warp the RGB frame into the top-down workspace view."""
         # TODO: student lab
+
+
         self.workspace_frame = self.video_frame.copy()
+
+        cv2.warpPerspective(self.workspace_frame, self.H, self.workspace_frame.shape, self.workspace_frame)
 
     def _to_qimage(self, frame):
         """Convert a NumPy RGB image into a Qt image for display."""
@@ -290,8 +330,11 @@ class VideoThread(QThread):
                 self.camera.tag_detections = self.camera.tag_detector.detect(gray)
             self._frame_counter += 1
 
+            
             self.camera.draw_tags_in_rgb_image()
             self.camera.update_workspace_frame()
+
+
 
             rgb_qt   = self.camera._to_qimage(self.camera.video_frame)
             depth_qt = self.camera._to_qimage(self.camera.depth_frame_rgb)

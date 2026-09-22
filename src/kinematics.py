@@ -121,30 +121,43 @@ def FK_dh(dh_params, joint_angles_rad, num_joints):
 # Units are mm, like FK_dh.
 
 M = np.array([
-    [1, 0, 0, 0],  # TODO: student lab
+    [1, 0, 0, 87],  # TODO: student lab
     [0, 1, 0, 0],
-    [0, 0, 1, 0],
+    [0, 0, 1, 154.2],
     [0, 0, 0, 1],
 ], dtype=float)
 
 S_list = np.array([
-    [0, 0, 0, 0, 0, 0],  # TODO: student lab
-    [0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0],
+    [0, 0, 1, 0, 0, 0],  # TODO: student lab
+    [0, 1, 0, -243.3, 0, 0],
+    [0, -1, 0, 443.3, 0, 0],
+    [0, 0, -1, 0, 87, 0],
+    [0, 1, 0, -215.7, 0, 87],
+    [0, 0, -1, 0, 87, 0],
 ], dtype=float)
 
 
-def to_s_matrix(w, v):
+def to_s_matrix(w, v, theta):
     """
     Build the 4x4 [S] skew-symmetric matrix for a screw axis.
     w: (3,) angular velocity component
     v: (3,) linear velocity component
     """
     # TODO: student lab
-    pass
+    skew_symmetric = np.array([
+        [0, -w[2], w[1]],
+        [w[2], 0, -w[0]],
+        [-w[1], w[0], 0],
+    ])
+
+    R = np.eye(3) + np.sin(theta) * skew_symmetric + (1 -np.cos(theta)) * (skew_symmetric @ skew_symmetric)
+
+    p = ((np.eye(3) * theta) @ v + (1 - np.cos(theta)) * (skew_symmetric @ v) + (theta - np.sin(theta)) * (skew_symmetric @ (skew_symmetric @ v))).reshape(-1, 1)
+
+    e_S_theta = np.vstack((np.hstack((R, p)), np.array([0,0,0,1])))
+
+    return e_S_theta
+    
 
 
 def FK_pox(joint_angles_rad, m_mat, s_lst):
@@ -159,9 +172,10 @@ def FK_pox(joint_angles_rad, m_mat, s_lst):
 
     Returns 4x4 homogeneous transform (base -> end-effector).
     """
-    # TODO: student lab
-    pass
-
+    H = np.eye(4)
+    for i, s in enumerate(s_lst):
+        H = H @ to_s_matrix(s[:3], s[3:], joint_angles_rad[i])
+    return H @ m_mat
 
 # ======================================================================
 # FK - shared output helper
