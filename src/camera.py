@@ -15,6 +15,7 @@ import pyrealsense2 as rs
 from pupil_apriltags import Detector
 from PyQt5.QtCore import QThread, pyqtSignal
 from PyQt5.QtGui import QImage
+import matplotlib.pyplot as plt
 
 COLOR_W, COLOR_H = 1280, 720
 DEPTH_W, DEPTH_H = 1024, 768
@@ -39,6 +40,7 @@ class Camera:
         self.depth_frame_rgb = np.zeros((COLOR_H, COLOR_W, 3), dtype=np.uint8)
         self.tag_image_frame = np.zeros((COLOR_H, COLOR_W, 3), dtype=np.uint8)
         self.workspace_frame = np.zeros((COLOR_H, COLOR_W, 3), dtype=np.uint8)
+        self.heatmap = np.zeros((COLOR_H, COLOR_W, 3), dtype=np.uint8)
 
         # Camera Calibration: extrinsic_matrix maps world-frame homogeneous points
         # to camera-frame homogeneous points; extrinsic_matrix_inv does the reverse.
@@ -147,6 +149,53 @@ class Camera:
 
         self.depth_frame_rgb = colorized
 
+    # 2.8a
+    def draw_gridlines_in_rgb_image(self):
+        # (-450,450) in y
+        # (450 in x)
+        intersections = np.array([])
+        projection_matrix = np.array([
+            [1,0,0,0],
+            [0,1,0,0],
+            [0,0,1,0],
+        ])
+        self.estimate_extrinsics_from_tags()
+        for x in range(0, 450, 50):
+            for y in range(-450, 450, 50):
+                world_point = np.array([x, y, 0, 1])
+                camera_point = self.extrinsic_matrix_inv @ world_point
+                pixel = 1 / camera_point[2] * self.intrinsic_matrix @ projection_matrix @ camera_point
+                #breakpoint()
+                cv2.drawMarker(self.tag_image_frame, [int(i) for i in pixel[:2]], [0,255,0], markerSize=30, thickness=2)
+
+    # 2.8b
+    def check_board_plane(self):
+        # pass
+        
+        rows, columns = self.video_frame.shape[:2]
+        local_heatmap = np.zeros((rows, columns))
+        try:                        
+            for row in range(0, rows, 5):
+                for col in range(0, columns, 5):
+                    # breakpoint()
+                    world_point = self.image_to_world(col, row)
+                    local_heatmap[row][col] = int(world_point[2])
+        except IndexError as e:
+            error = e
+            breakpoint()
+
+        # breakpoint()
+                
+
+
+        # plt.imshow(local_heatmap, cmap="viridis", interpolation="nearest")
+        # plt.colorbar()
+        # plt.title('Z Error')
+        # plt.savefig(fname="z_error_heatmap")
+
+        # breakpoint()
+
+
     def draw_tags_in_rgb_image(self):
         # TODO: student lab
         self.tag_image_frame = self.video_frame.copy()
@@ -212,7 +261,7 @@ class Camera:
         X = (x - cx) * Z / fx
         Y = (y- cy) * Z / fy
         # breakpoint()
-        print(f"X: {X}, Y: {Y}, Z: {Z}")
+        #print(f"X: {X}, Y: {Y}, Z: {Z}")
         
         return np.array([X, Y, Z])
 
@@ -231,43 +280,45 @@ class Camera:
 
     def workspace_pixel_to_image(self, x_px, y_px):
         """Map a workspace-view pixel back to the original image pixel."""
-        # TODO: student lab
-        return None
+
+        self._update_workspace_transform()
+        
+        transformed_point = cv2.perspectiveTransform(np.array([[[x_px,y_px]]], dtype=np.float32), self.workspace_homography_inv)
+        return transformed_point[0][0]
 
     def _update_workspace_transform(self):
         """Build the homography used for the top-down workspace view."""
         self.workspace_homography = None
         self.workspace_homography_inv = None
-        # TODO: student lab
 
         source_readings = []
         for detection_obj in self.tag_detections:
             source_readings.append(detection_obj.center)
 
-        destinations = [[380, 190], 
-                        [950, 190],
+        source_readings = np.array(source_readings)
+
+        destinations = np.array([[380, 475], 
                         [950, 475],
-                        [380, 475] ]
+                        [950, 190],
+                        [380, 190] ])
+
+        #breakpoint()
 
         H, _ = cv2.findHomography(source_readings, destinations)
 
-        self.H = H
-        self.H_inverse = np.linalg.inv(H)
-
-        
-
-        
-
+        self.workspace_homography = H
+        self.workspace_homography_inv = np.linalg.inv(H)
         
 
     def update_workspace_frame(self):
         """Warp the RGB frame into the top-down workspace view."""
-        # TODO: student lab
-
 
         self.workspace_frame = self.video_frame.copy()
 
-        cv2.warpPerspective(self.workspace_frame, self.H, self.workspace_frame.shape, self.workspace_frame)
+        self._update_workspace_transform()
+        #breakpoint()
+
+        self.workspace_frame = cv2.warpPerspective(self.workspace_frame, self.workspace_homography, (self.workspace_frame.shape[1], self.workspace_frame.shape[0]))
 
     def _to_qimage(self, frame):
         """Convert a NumPy RGB image into a Qt image for display."""
@@ -333,16 +384,18 @@ class VideoThread(QThread):
             
             self.camera.draw_tags_in_rgb_image()
             self.camera.update_workspace_frame()
-
-
+            self.camera.draw_gridlines_in_rgb_image()
+            self.camera.check_board_plane()
 
             rgb_qt   = self.camera._to_qimage(self.camera.video_frame)
             depth_qt = self.camera._to_qimage(self.camera.depth_frame_rgb)
             tag_qt   = self.camera._to_qimage(self.camera.tag_image_frame)
             workspace_qt = self.camera._to_qimage(self.camera.workspace_frame)
+            heatmap_qt = self.camera._to_qimage(self.camera.heatmap)
 
-            if rgb_qt and depth_qt and tag_qt and workspace_qt:
+            if rgb_qt and depth_qt and tag_qt and workspace_qt and heatmap_qt:
                 self.updateFrame.emit(rgb_qt, depth_qt, tag_qt, workspace_qt)
+                # self.updateFrame.emit(rgb_qt, depth_qt, heatmap_qt, workspace_qt)
 
             elapsed = time.time() - start
             time.sleep(max(0.0, 1 / 30 - elapsed))

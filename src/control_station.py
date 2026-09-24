@@ -178,11 +178,13 @@ class Gui(QMainWindow):
     def _view_pixel_to_raw_image_pixel(self, x, y):
         """Map the selected view pixel to the raw image pixel used for depth."""
         if self._selected_view_key() != "workspace" or self.camera.workspace_homography_inv is None:
-            return x, y
+            return x,y
 
         xy = self.camera.workspace_pixel_to_image(x, y)
         if xy is None:
             return x, y
+
+        print(f'XY: {xy}')
 
         h, w = self.camera.depth_frame_raw.shape
         return (
