@@ -122,8 +122,8 @@ def FK_dh(dh_params, joint_angles_rad, num_joints):
 
 M = np.array([
     [1, 0, 0, 87],  # TODO: student lab
-    [0, 1, 0, 0],
-    [0, 0, 1, 154.2],
+    [0, -1, 0, 0],
+    [0, 0, -1, 154.2],
     [0, 0, 0, 1],
 ], dtype=float)
 

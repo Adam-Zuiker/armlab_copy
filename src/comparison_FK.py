@@ -1,110 +1,157 @@
+from pathlib import Path
 
-from lite6arm import Lite6Arm
-from kinematics import JOINT_LIMITS, get_pose_from_T, FK_dh, DH_STD
-from scipy.spatial.transform import Rotation as R
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
+from scipy.spatial.transform import Rotation as R
 
-def compare_FK():
+from kinematics import DH_STD, JOINT_LIMITS, M, S_list, FK_dh, FK_pox
+from lite6arm import Lite6Arm
+
+
+NUM_SAMPLES = 500
+RNG_SEED = 550
+
+
+def rotation_error(R_a, R_b):
+    """Return the smallest rotation from R_a to R_b, in radians."""
+    R_error = R_a.T @ R_b
+    cos_angle = (np.trace(R_error) - 1.0) / 2.0
+    return np.arccos(np.clip(cos_angle, -1.0, 1.0))
+
+
+def print_error_statistics(label, position_errors, orientation_errors):
+    """Print the required FK comparison statistics."""
+    print(f"\n{label}")
+    for name, values, unit in (
+        ("Euclidean distance error", position_errors, "mm"),
+        ("Orientation error", orientation_errors, "rad"),
+    ):
+        print(f"  Mean {name}: {np.mean(values):.12g} {unit}")
+        print(f"  Median {name}: {np.median(values):.12g} {unit}")
+        print(f"  Maximum {name}: {np.max(values):.12g} {unit}")
+        print(f"  95th percentile {name}: {np.percentile(values, 95):.12g} {unit}")
+
+
+def save_figure(figure, filename):
+    output_dir = Path(__file__).resolve().parent.parent / "plots"
+    output_dir.mkdir(exist_ok=True)
+    path = output_dir / filename
+    figure.tight_layout()
+    figure.savefig(path, dpi=150)
+    print(f"Saved plot: {path}")
+
+
+def plot_histograms(title, position_errors, orientation_errors):
+    figure, axes = plt.subplots(1, 2, figsize=(11, 4))
+    axes[0].hist(position_errors, bins=50, color="tab:blue")
+    axes[0].set(title="Position error", xlabel="Error (mm)", ylabel="Frequency")
+    axes[1].hist(orientation_errors, bins=50, color="tab:red")
+    axes[1].set(title="Orientation error", xlabel="Error (rad)", ylabel="Frequency")
+    figure.suptitle(title)
+    return figure
+
+
+def plot_joint_errors(joint_angles, errors, ylabel, title):
+    figure, axes = plt.subplots(3, 2, figsize=(16, 12))
+    for i, axis in enumerate(axes.flat):
+        axis.scatter(joint_angles[:, i], errors, s=10)
+        axis.set(
+            xlabel=f"Joint {i + 1} angle (rad)",
+            ylabel=ylabel,
+            title=f"Joint {i + 1}",
+        )
+    figure.suptitle(title)
+    return figure
+
+
+def compare_FK(num_samples=NUM_SAMPLES, rng_seed=RNG_SEED):
+    """Sweep one fixed set of configurations through vendor, PoX, and DH FK."""
     arm = Lite6Arm()
+    if arm.xarm is None:
+        raise RuntimeError("The xArm SDK is unavailable; cannot compare against the vendor FK.")
 
-    differences = JOINT_LIMITS[:, 1] - JOINT_LIMITS[:, 0]
+    rng = np.random.default_rng(rng_seed)
+    joint_angles = rng.uniform(JOINT_LIMITS[:, 0], JOINT_LIMITS[:, 1], size=(num_samples, 6))
 
-    joint_angles = []
-    euclidean_errors = []
-    angle_errors = []
+    pox_vendor_position_errors = []
+    pox_vendor_orientation_errors = []
+    pox_dh_position_errors = []
+    pox_dh_orientation_errors = []
 
-    for i in range(500): 
-        rands = np.random.rand(1, 6)
+    for q in joint_angles:
+        code, pose_vendor = arm.xarm.get_forward_kinematics(q)
+        if code != 0:
+            raise RuntimeError(f"Vendor forward kinematics failed for q={q}: error code {code}")
 
-        
-        offset = rands * differences
-        q = offset + JOINT_LIMITS[:, 0]
-        q = q.squeeze()
+        T_pox = FK_pox(q, M, S_list)
+        T_dh = FK_dh(DH_STD, q, 6)
 
-        joint_angles.append(q)
+        pose_vendor = np.asarray(pose_vendor, dtype=float)
+        R_vendor = R.from_euler("xyz", pose_vendor[3:], degrees=False).as_matrix()
 
+        pox_vendor_position_errors.append(np.linalg.norm(T_pox[:3, 3] - pose_vendor[:3]))
+        pox_vendor_orientation_errors.append(rotation_error(T_pox[:3, :3], R_vendor))
+        pox_dh_position_errors.append(np.linalg.norm(T_pox[:3, 3] - T_dh[:3, 3]))
+        pox_dh_orientation_errors.append(rotation_error(T_pox[:3, :3], T_dh[:3, :3]))
 
-        code, pose_sdk = arm.xarm.get_forward_kinematics(q)
+    pox_vendor_position_errors = np.asarray(pox_vendor_position_errors)
+    pox_vendor_orientation_errors = np.asarray(pox_vendor_orientation_errors)
+    pox_dh_position_errors = np.asarray(pox_dh_position_errors)
+    pox_dh_orientation_errors = np.asarray(pox_dh_orientation_errors)
 
-        H = FK_dh(DH_STD, q, 6)
+    print(f"Sample count: {num_samples}; random seed: {rng_seed}")
+    print_error_statistics(
+        "PoX compared with vendor FK",
+        pox_vendor_position_errors,
+        pox_vendor_orientation_errors,
+    )
+    print_error_statistics(
+        "PoX-DH agreement on the same configurations",
+        pox_dh_position_errors,
+        pox_dh_orientation_errors,
+    )
 
-        pose_sdk = np.array(pose_sdk)
+    figures = (
+        (
+            plot_histograms(
+                "PoX compared with vendor FK",
+                pox_vendor_position_errors,
+                pox_vendor_orientation_errors,
+            ),
+            "pox_vendor_error_histograms.png",
+        ),
+        (
+            plot_joint_errors(
+                joint_angles,
+                pox_vendor_orientation_errors,
+                "Orientation error (rad)",
+                "PoX-vendor orientation error by joint",
+            ),
+            "pox_vendor_orientation_errors_by_joint.png",
+        ),
+        (
+            plot_joint_errors(
+                joint_angles,
+                pox_vendor_position_errors,
+                "Position error (mm)",
+                "PoX-vendor position error by joint",
+            ),
+            "pox_vendor_position_errors_by_joint.png",
+        ),
+        (
+            plot_histograms(
+                "PoX-DH agreement on identical configurations",
+                pox_dh_position_errors,
+                pox_dh_orientation_errors,
+            ),
+            "pox_dh_agreement_histograms.png",
+        ),
+    )
+    for figure, filename in figures:
+        save_figure(figure, filename)
 
-        our_pose = np.array(get_pose_from_T(H))
+    plt.show()
 
-        pose_diff_euclidean = np.linalg.norm(pose_sdk[:3] - our_pose[:3])
-
-        euclidean_errors.append(pose_diff_euclidean)
-
-        pose_sdk_rotation = R.from_euler('xyz', pose_sdk[3:], degrees=False)
-        pose_sdk_rotation_mat = pose_sdk_rotation.as_matrix()
-
-        our_pose_rotation = R.from_euler('xyz', our_pose[3:], degrees=False)
-        our_pose_rotation_mat = our_pose_rotation.as_matrix()
-
-        R_error = our_pose_rotation_mat.T @ pose_sdk_rotation_mat
-
-        angle = np.arccos((np.trace(R_error) - 1) / 2)
-
-        angle_errors.append(angle)
-
-    mean_euclidian = np.mean(euclidean_errors)
-    mean_angles = np.mean(angle_errors)
-    median_euclidian = np.median(euclidean_errors)
-    median_angles = np.median(angle_errors)
-    max_euclidian = np.max(euclidean_errors)
-    max_angles = np.max(angle_errors)
-    p95_euclidian = np.percentile(euclidean_errors, 95)
-    p95_angles = np.percentile(angle_errors, 95)
-
-    fig, (plt1, plt2) = plt.subplots(1, 2, figsize = (5, 5))
-    plt1.hist(euclidean_errors, bins = 50, color = 'blue')
-    plt1.set_title('Histogram of Errors, Euclidian Distance')
-    plt1.set_xlabel('Position Error')
-    plt1.set_ylabel('Frequency')
-
-    plt2.hist(angle_errors, bins = 50, color = 'red')
-    plt2.set_title("Histogram of Errors, Joint Angles")
-    plt2.set_xlabel("Degree Error")
-    plt2.set_ylabel("Frequency")
-    fig.show()
-
-    joint_angles = np.array(joint_angles)
-
-
-    fig1, joint_axes = plt.subplots(3, 2, figsize = (16, 12))
-    
-
-    for i, ax in enumerate(joint_axes.flatten()):
-        ax.scatter(joint_angles[:, i], angle_errors)
-        ax.set_xlabel(f"Joint {i+1} Angle")
-        ax.set_ylabel("Angle Error")
-        ax.set_title(f"Joint Angle vs Angle Error (Joint {i+1})")
-
-    
-
-   
-
-    fig2, joint_axes2 = plt.subplots(3, 2, figsize = (16, 12))
-    for i, ax in enumerate(joint_axes2.flatten()):
-        ax.scatter(joint_angles[:, i], euclidean_errors)
-        ax.set_xlabel(f"Joint {i+1} Angle")
-        ax.set_ylabel("Angle Error")
-        ax.set_title(f"Joint Angle vs Eudlidean Error (Joint {i+1})")
-        
-    
-
-    fig1.show()
-    fig2.show()
-
-
-
-
-
-
-
-    breakpoint()
 
 if __name__ == "__main__":
     compare_FK()

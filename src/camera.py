@@ -31,6 +31,8 @@ TAG_WORLD_POINTS = {
     4: (400.0, 300.0, 0.0),
 }
 
+FIXTURE_TAG_ID = 5
+
 class Camera:
     """Holds live frame data and owns the RealSense pipeline."""
 
@@ -223,14 +225,23 @@ class Camera:
         if not self.camera_connected:
             return False, "Camera offline - cannot calibrate."
 
-        centers = []
+        tag_ids = [1,2,3,4]
+
+        centers = {}
         # TODO: student lab
         for detection_obj in self.tag_detections:
-            centers.append(detection_obj.center)
+            centers[detection_obj.tag_id] = detection_obj.center
+
+        if any(tag_id not in centers for tag_id in tag_ids):
+            return False
+
+        world_points = np.array([self.tag_world_points[tag_id] for tag_id in tag_ids], dtype=np.float64)
+
+        image_points = np.array([centers[tag_id] for tag_id in tag_ids], dtype=np.float64)
 
         # breakpoint()
 
-        _, rot_vec, trans_vec = cv2.solvePnP(np.array(list(TAG_WORLD_POINTS.values())), np.array(centers), self.intrinsic_matrix, distCoeffs=None)
+        _, rot_vec, trans_vec = cv2.solvePnP(world_points, image_points, self.intrinsic_matrix, distCoeffs=None)
         rot_matrix, _ = cv2.Rodrigues(rot_vec)
 
         # breakpoint()
@@ -243,6 +254,7 @@ class Camera:
         self.extrinsic_matrix = np.linalg.inv(extr_matrix)
         self.extrinsic_matrix_inv = extr_matrix
         self.camera_calibrated = True
+
 
         # breakpoint()
 
@@ -291,11 +303,16 @@ class Camera:
         self.workspace_homography = None
         self.workspace_homography_inv = None
 
-        source_readings = []
+        tag_ids = [1,2,3,4]
+        source_readings = {}
         for detection_obj in self.tag_detections:
-            source_readings.append(detection_obj.center)
+            if detection_obj.tag_id in tag_ids:
+                source_readings[detection_obj.tag_id] = detection_obj.center
 
-        source_readings = np.array(source_readings)
+        if any(tag_id not in source_readings for tag_id in tag_ids):
+            return False, "Board tags 1–4 must be visible."
+
+        source_readings = np.array([source_readings[tag_id] for tag_id in tag_ids],  dtype=np.float64)
 
         destinations = np.array([[380, 475], 
                         [950, 475],
@@ -308,6 +325,8 @@ class Camera:
 
         self.workspace_homography = H
         self.workspace_homography_inv = np.linalg.inv(H)
+
+        return True
         
 
     def update_workspace_frame(self):
@@ -315,10 +334,8 @@ class Camera:
 
         self.workspace_frame = self.video_frame.copy()
 
-        self._update_workspace_transform()
-        #breakpoint()
-
-        self.workspace_frame = cv2.warpPerspective(self.workspace_frame, self.workspace_homography, (self.workspace_frame.shape[1], self.workspace_frame.shape[0]))
+        if self._update_workspace_transform():
+            self.workspace_frame = cv2.warpPerspective(self.workspace_frame, self.workspace_homography, (self.workspace_frame.shape[1], self.workspace_frame.shape[0]))
 
     def _to_qimage(self, frame):
         """Convert a NumPy RGB image into a Qt image for display."""
