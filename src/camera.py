@@ -16,6 +16,7 @@ from pupil_apriltags import Detector
 from PyQt5.QtCore import QThread, pyqtSignal
 from PyQt5.QtGui import QImage
 import matplotlib.pyplot as plt
+from scipy.spatial.transform import Rotation as R
 
 COLOR_W, COLOR_H = 1280, 720
 DEPTH_W, DEPTH_H = 1024, 768
@@ -30,7 +31,9 @@ TAG_WORLD_POINTS = {
     3: (400.0, -300.0, 0.0),
     4: (400.0, 300.0, 0.0),
 }
-
+# TODO: fill in from the fixture spec for your station.
+FIXTURE_OFFSET_MM = np.array([0.0, 0.0, 0.0])
+CHECK_3D_CSV = "check_3d_results.csv"
 FIXTURE_TAG_ID = 5
 
 class Camera:
@@ -66,6 +69,7 @@ class Camera:
         self.depth_scale_mm = 1.0   # raw depth units -> mm; overwritten once the pipeline starts
         self._pipeline_running = False
         self.camera_connected = False
+        self.check_3d_records = []
 
         if len(rs.context().query_devices()) == 0:
             print("WARNING: No RealSense device found - running without video.")
@@ -197,6 +201,39 @@ class Camera:
 
         # breakpoint()
 
+        # 2.8c
+    def check_3d_point(self, ee_pose):
+        """
+        Record one fixture measurement. ee_pose is the arm's reported
+        [x, y, z (mm), roll, pitch, yaw (rad)]. Returns (ok, message).
+        """
+        fixture = next((d for d in self.tag_detections if d.tag_id == FIXTURE_TAG_ID), None)
+        if fixture is None:
+            return False, f"Fixture tag {FIXTURE_TAG_ID} not visible."
+
+        u, v = np.round(fixture.center).astype(int)
+        if self.depth_frame_raw[v, u] == 0:
+            return False, "No depth reading at the fixture tag - try again."
+
+        # truth: arm-reported EE position + fixture offset rotated into the world frame
+        R_ee = R.from_euler("xyz", ee_pose[3:]).as_matrix()
+        truth = np.asarray(ee_pose[:3]) + R_ee @ FIXTURE_OFFSET_MM
+
+        # estimate: tag center pixel -> depth -> world, through the camera pipeline
+        estimate = self.image_to_world(u, v)[:3]
+
+        error = estimate - truth
+        dist = np.linalg.norm(error)
+        self.check_3d_records.append(np.concatenate((truth, estimate, error, [dist])))
+        np.savetxt(CHECK_3D_CSV, np.array(self.check_3d_records), delimiter=",", fmt="%.2f",
+                   header="truth_x,truth_y,truth_z,est_x,est_y,est_z,err_x,err_y,err_z,err_dist",
+                   comments="")
+
+        msg = (f"3D check #{len(self.check_3d_records)}: "
+               f"err=({error[0]:+.1f}, {error[1]:+.1f}, {error[2]:+.1f}) |err|={dist:.1f} mm")
+        print(f"{msg}  truth={truth.round(1)} est={estimate.round(1)}")
+        return True, msg
+
 
     def draw_tags_in_rgb_image(self):
         # TODO: student lab
@@ -233,7 +270,7 @@ class Camera:
             centers[detection_obj.tag_id] = detection_obj.center
 
         if any(tag_id not in centers for tag_id in tag_ids):
-            return False
+            return False, "Board tags 1–4 must be visible."
 
         world_points = np.array([self.tag_world_points[tag_id] for tag_id in tag_ids], dtype=np.float64)
 
@@ -310,7 +347,7 @@ class Camera:
                 source_readings[detection_obj.tag_id] = detection_obj.center
 
         if any(tag_id not in source_readings for tag_id in tag_ids):
-            return False, "Board tags 1–4 must be visible."
+            return False
 
         source_readings = np.array([source_readings[tag_id] for tag_id in tag_ids],  dtype=np.float64)
 

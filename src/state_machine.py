@@ -26,6 +26,7 @@ class StateMachine:
             "playback_waypoints":self.playback_waypoints,
             "direct_control":    self.direct_control,
             "pick_place":        self.pick_place,
+            "check_3d":          self.check_3d,
         }
 
         self.waypoints = []
@@ -141,6 +142,10 @@ class StateMachine:
         if self.current_state != "pick_place":
             self.status_message = "Pick & Place - click an object in the video feed."
             self.current_state = "pick_place"
+
+    def check_3d(self):
+        _, self.status_message = self.camera.check_3d_point(self.arm.get_ee_pose_sdk())
+        self.next_state = self.current_state  # go back to what we were doing (e.g. direct control)
 
 class StateMachineThread(QThread):
     updateStatusMessage = pyqtSignal(str)

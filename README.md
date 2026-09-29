@@ -154,3 +154,15 @@ No external config file is needed.
 
 ### Arm IP address
 The arm's IP is hardcoded in `src/lite6arm.py`. Change `XARM_IP` to match your station.
+
+
+## Part 2.8c
+
+To collect the data:
+
+Press Calibrate while all four board tags are visible, then grip the fixture.
+Jog to each of the 4 board locations at z ≈ 50, 150 and 250 mm.
+At each pose, let the arm settle and press Ctrl+R.
+Each press prints the error to the terminal and shows it in the status bar. It also rewrites check_3d_results.csv in whatever directory you launched from (probably src/).
+
+FIXTURE_OFFSET_MM is still [0, 0, 0]. Fill it in from the fixture spec before you record, or every error will include the full fixture offset.

@@ -6,8 +6,8 @@ from functools import partial
 
 import numpy as np
 from PyQt5.QtCore import QEvent, QTimer, Qt, pyqtSlot
-from PyQt5.QtGui import QImage, QPixmap
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget
+from PyQt5.QtGui import QImage, QKeySequence, QPixmap
+from PyQt5.QtWidgets import QApplication, QMainWindow, QShortcut, QWidget
 
 from camera import Camera, VideoThread
 from lite6arm import ArmThread, Lite6Arm, JOINT_NAMES
@@ -58,6 +58,8 @@ class Gui(QMainWindow):
         self.ui.btn_add_wp.clicked.connect(partial(self.sm.set_next_state, "add_waypoint"))
         self.ui.btn_clear_wps.clicked.connect(partial(self.sm.set_next_state, "clear_waypoints"))
         self.ui.btn_playback_wps.clicked.connect(partial(self.sm.set_next_state, "playback_waypoints"))
+        # 2.8c: record one fixture measurement at the current pose
+        QShortcut(QKeySequence("Ctrl+R"), self, activated=partial(self.sm.set_next_state, "check_3d"))
 
         # --- IK panel ---
         self._ik_result = None
