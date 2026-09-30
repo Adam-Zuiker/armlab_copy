@@ -33,7 +33,7 @@ def print_error_statistics(label, position_errors, orientation_errors):
 
 
 def save_figure(figure, filename):
-    output_dir = Path(__file__).resolve().parent.parent / "plots"
+    output_dir = Path(__file__).resolve().parent.parent / "results"
     output_dir.mkdir(exist_ok=True)
     path = output_dir / filename
     figure.tight_layout()

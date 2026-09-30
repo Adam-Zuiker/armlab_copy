@@ -60,6 +60,8 @@ class Gui(QMainWindow):
         self.ui.btn_playback_wps.clicked.connect(partial(self.sm.set_next_state, "playback_waypoints"))
         # 2.8c: record one fixture measurement at the current pose
         QShortcut(QKeySequence("Ctrl+R"), self, activated=partial(self.sm.set_next_state, "check_3d"))
+        # 2.8b: save one empty-board height check
+        QShortcut(QKeySequence("Ctrl+B"), self, activated=lambda: setattr(self.camera, "board_check_requested", True))
 
         # --- IK panel ---
         self._ik_result = None

@@ -8,6 +8,7 @@ Runtime behavior:
   AprilTags + solvePnP at runtime
 """
 import time
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -32,8 +33,22 @@ TAG_WORLD_POINTS = {
     4: (400.0, 300.0, 0.0),
 }
 # TODO: fill in from the fixture spec for your station.
-FIXTURE_OFFSET_MM = np.array([0.0, 0.0, 0.0])
-CHECK_3D_CSV = "check_3d_results.csv"
+FIXTURE_OFFSET_MM = np.array([0, 0, 60], dtype=float)
+CHECK_3D_TARGETS_MM = np.array([
+    [ -50, 350, 100],
+    [ -50, 350, 150],
+    [ -50, 350, 200],
+    [ 300,   0, 100],
+    [ 300,   0, 150],
+    [ 300,   0, 200],
+    [   0,-350, 100],
+    [   0,-350, 150],
+    [   0,-350, 200],
+    [ 350,-150, 100],
+    [ 350,-150, 150],
+    [ 350,-150, 200],
+], dtype=float)
+CHECK_3D_CSV = (Path(__file__).resolve().parent.parent / "results" / "check_3d_results.csv")
 FIXTURE_TAG_ID = 5
 
 class Camera:
@@ -65,11 +80,13 @@ class Camera:
         # AprilTag state
         self.tag_world_points = dict(TAG_WORLD_POINTS)
         self.tag_detections = []
+        self.board_tag_centers_px = None
         self.tag_detect_interval = 6  # ~5 Hz at 30 FPS
         self.depth_scale_mm = 1.0   # raw depth units -> mm; overwritten once the pipeline starts
         self._pipeline_running = False
         self.camera_connected = False
         self.check_3d_records = []
+        self.board_check_requested = False
 
         if len(rs.context().query_devices()) == 0:
             print("WARNING: No RealSense device found - running without video.")
@@ -157,6 +174,8 @@ class Camera:
 
     # 2.8a
     def draw_gridlines_in_rgb_image(self):
+        if not self.camera_calibrated:
+            return
         # (-450,450) in y
         # (450 in x)
         intersections = np.array([])
@@ -165,7 +184,8 @@ class Camera:
             [0,1,0,0],
             [0,0,1,0],
         ])
-        self.estimate_extrinsics_from_tags()
+        # self.estimate_extrinsics_from_tags()
+
         for x in range(0, 450, 50):
             for y in range(-450, 450, 50):
                 world_point = np.array([x, y, 0, 1])
@@ -175,65 +195,168 @@ class Camera:
                 cv2.drawMarker(self.tag_image_frame, [int(i) for i in pixel[:2]], [0,255,0], markerSize=30, thickness=2)
 
     # 2.8b
-    def check_board_plane(self):
-        # pass
+    # def check_board_plane(self):
+    #     # pass
+    #     if not self.camera_calibrated:
+    #         return False, "Calibrate the camera first."
+    #     rows, columns = self.video_frame.shape[:2]
+    #     local_heatmap = np.zeros((rows, columns))
+    #     try:                        
+    #         for row in range(rows):
+    #             for col in range(columns):
+    #                 # breakpoint()
+    #                 world_point = self.image_to_world(col, row)
+    #                 local_heatmap[row][col] = int(world_point[2])
+    #     except IndexError as e:
+    #         error = e
+    #         breakpoint()
+
+    #     plt.imshow(local_heatmap, cmap="viridis", interpolation="nearest")
+    #     plt.colorbar()
+    #     plt.title('Z Error')
+    #     plt.savefig(fname="z_error_heatmap")
+    
+
+    def check_board_plane(self, step=1):
+        if not self.camera_calibrated:
+            return False, "Calibrate the camera first."
+
+        rows, columns = self.depth_frame_raw.shape
+        sample_rows = range(0, rows, step)
+        sample_cols = range(0, columns, step)
+
+        # NaN means no valid depth measurement, not zero error.
+        z_map = np.full( (len(sample_rows), len(sample_cols)), np.nan, dtype=float)
         
-        rows, columns = self.video_frame.shape[:2]
-        local_heatmap = np.zeros((rows, columns))
-        try:                        
-            for row in range(0, rows, 5):
-                for col in range(0, columns, 5):
-                    # breakpoint()
-                    world_point = self.image_to_world(col, row)
-                    local_heatmap[row][col] = int(world_point[2])
-        except IndexError as e:
-            error = e
-            breakpoint()
+        records = []
+        for map_row, image_row in enumerate(sample_rows):
+            for map_col, image_col in enumerate(sample_cols):
+                if self.depth_frame_raw[image_row, image_col] == 0:
+                    continue
 
-        # breakpoint()
-                
+                world_point = self.image_to_world(image_col, image_row)
+                if world_point is None:
+                    continue
 
+                z_mm = float(world_point[2])
+                z_map[map_row, map_col] = z_mm
+                records.append((image_col, image_row, z_mm))
 
-        # plt.imshow(local_heatmap, cmap="viridis", interpolation="nearest")
-        # plt.colorbar()
-        # plt.title('Z Error')
-        # plt.savefig(fname="z_error_heatmap")
+        output_dir = Path(__file__).resolve().parent.parent / "results"
+        # np.savetxt(
+        #     output_dir / "z_error_samples.csv",
+        #     np.asarray(records),
+        #     delimiter=",",
+        #     fmt=["%d", "%d", "%.3f"],
+        #     header="u_px,v_px,world_z_mm",
+        #     comments="",
+        # )
 
-        # breakpoint()
+        fig, ax = plt.subplots(figsize=(12, 7))
+        image = ax.imshow(
+            np.ma.masked_invalid(z_map),
+            cmap="viridis",
+            vmin=-100,   # mm: same lower limit for every capture
+            vmax=300,    # mm: same upper limit for every capture
+            interpolation="nearest",
+            extent=(0, columns, rows, 0),
+        )
+        fig.colorbar(image, ax=ax, label="World z (mm)")
+        ax.set_title("z error heatmap")
+        ax.set_xlabel("Image u (pixels)")
+        ax.set_ylabel("Image v (pixels)")
+        fig.savefig(output_dir/ "z_error_heatmap.png")
+        plt.close(fig)
 
+        return True, "z error heatmap successfully saved"
+        
         # 2.8c
     def check_3d_point(self, ee_pose):
-        """
-        Record one fixture measurement. ee_pose is the arm's reported
-        [x, y, z (mm), roll, pitch, yaw (rad)]. Returns (ok, message).
-        """
-        fixture = next((d for d in self.tag_detections if d.tag_id == FIXTURE_TAG_ID), None)
+        if not self.camera_calibrated:
+            return False, "Calibrate the camera first."
+        if FIXTURE_OFFSET_MM is None:
+            return False, "Fixture offset is unknown; cannot record 3D error."
+        
+        index = len(self.check_3d_records)
+        if index >= len(CHECK_3D_TARGETS_MM):
+            return False, "All 12 target measurements are recorded."
+
+        if ee_pose is None:
+            return False, "No arm pose available."
+
+        ee_pose = np.asarray(ee_pose, dtype=float)
+        if ee_pose.shape != (6,) or not np.all(np.isfinite(ee_pose)):
+            return False, "Invalid arm pose."
+
+        # get_ee_pose_sdk currently returns six zeros when SDK FK fails.
+        if np.allclose(ee_pose, 0.0):
+            return False, "Arm pose unavailable; SDK FK returned zeros."
+
+        fixture = self.find_fixture_detection()
         if fixture is None:
-            return False, f"Fixture tag {FIXTURE_TAG_ID} not visible."
-
+            return False, "Fixture not uniquely detected; keep board tag 1 and the fixture visible."
+        
         u, v = np.round(fixture.center).astype(int)
-        if self.depth_frame_raw[v, u] == 0:
-            return False, "No depth reading at the fixture tag - try again."
+        height, width = self.depth_frame_raw.shape
+        if not (0 <= u < width and 0 <= v < height):
+            return False, "Fixture tag center is outside the depth image."
 
-        # truth: arm-reported EE position + fixture offset rotated into the world frame
-        R_ee = R.from_euler("xyz", ee_pose[3:]).as_matrix()
-        truth = np.asarray(ee_pose[:3]) + R_ee @ FIXTURE_OFFSET_MM
+        raw_depth = self.depth_frame_raw[v, u]
+        if raw_depth == 0:
+            return False, "No depth at the fixture tag center."
 
-        # estimate: tag center pixel -> depth -> world, through the camera pipeline
-        estimate = self.image_to_world(u, v)[:3]
+        # Target describes the intended tag-center position.
+        target = CHECK_3D_TARGETS_MM[index]
+
+        # Truth comes from the arm's ACTUAL pose, not the intended target.
+        ee_rotation = R.from_euler("xyz", ee_pose[3:]).as_matrix()
+        truth = ee_pose[:3] + ee_rotation @ FIXTURE_OFFSET_MM
+
+        # Camera estimate comes from the detected tag center and aligned depth.
+        world_point = self.image_to_world(u, v)
+        if world_point is None:
+            return False, "Could not convert fixture pixel to world coordinates."
+        estimate = np.asarray(world_point[:3], dtype=float)
 
         error = estimate - truth
-        dist = np.linalg.norm(error)
-        self.check_3d_records.append(np.concatenate((truth, estimate, error, [dist])))
-        np.savetxt(CHECK_3D_CSV, np.array(self.check_3d_records), delimiter=",", fmt="%.2f",
-                   header="truth_x,truth_y,truth_z,est_x,est_y,est_z,err_x,err_y,err_z,err_dist",
-                   comments="")
+        distance_error = float(np.linalg.norm(error))
+        depth_mm = float(raw_depth * self.depth_scale_mm)
 
-        msg = (f"3D check #{len(self.check_3d_records)}: "
-               f"err=({error[0]:+.1f}, {error[1]:+.1f}, {error[2]:+.1f}) |err|={dist:.1f} mm")
-        print(f"{msg}  truth={truth.round(1)} est={estimate.round(1)}")
-        return True, msg
+        record = np.concatenate((
+            [index + 1],
+            target,
+            ee_pose,
+            truth,
+            estimate,
+            error,
+            [distance_error, u, v, depth_mm],
+        ))
+        self.check_3d_records.append(record)
 
+        CHECK_3D_CSV.parent.mkdir(parents=True, exist_ok=True)
+        np.savetxt(
+            CHECK_3D_CSV,
+            np.asarray(self.check_3d_records),
+            delimiter=",",
+            fmt="%.3f",
+            header=(
+                "sample,target_x,target_y,target_z,"
+                "ee_x,ee_y,ee_z,ee_roll,ee_pitch,ee_yaw,"
+                "truth_x,truth_y,truth_z,"
+                "est_x,est_y,est_z,"
+                "err_x,err_y,err_z,err_dist,"
+                "u_px,v_px,depth_mm"
+            ),
+            comments="",
+        )
+
+        message = (
+            f"Recorded {index + 1}/12 for target {target.astype(int)} mm: "
+            f"error=({error[0]:+.1f}, {error[1]:+.1f}, "
+            f"{error[2]:+.1f}) mm; distance={distance_error:.1f} mm"
+        )
+        print(message)
+        return True, message
 
     def draw_tags_in_rgb_image(self):
         # TODO: student lab
@@ -242,6 +365,9 @@ class Camera:
         # uncomment this for task 2.5
         # self.estimate_extrinsics_from_tags()
 
+        if not self.camera_calibrated:
+            return
+        fixture = self.find_fixture_detection()
         for detection_obj in self.tag_detections:
 
             # breakpoint()
@@ -249,8 +375,13 @@ class Camera:
             # cv2.line(self.tag_image_frame, test[0], test[1], color=[0, 255, 0], thickness=2)
             # breakpoint()
             cv2.polylines(self.tag_image_frame, [detection_obj.corners.astype(int)], isClosed=True, color=[0, 255, 0], thickness=2)
-            cv2.putText(self.tag_image_frame, str(detection_obj.tag_id), detection_obj.corners[0].astype(int), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.0 ,color=[255, 0, 0], thickness=2)
-
+            label = "5*" if detection_obj is fixture else str(detection_obj.tag_id)
+            # cv2.putText(self.tag_image_frame, str(detection_obj.tag_id), detection_obj.corners[0].astype(int), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.0 ,color=[255, 0, 0], thickness=2)
+            cv2.putText(
+                self.tag_image_frame, label,
+                detection_obj.corners[0].astype(int),
+                cv2.FONT_HERSHEY_PLAIN, 1.0, [255, 0, 0], 2
+            )
         # breakpoint()
 
     def estimate_extrinsics_from_tags(self):
@@ -262,12 +393,21 @@ class Camera:
         if not self.camera_connected:
             return False, "Camera offline - cannot calibrate."
 
-        tag_ids = [1,2,3,4]
-
-        centers = {}
         # TODO: student lab
-        for detection_obj in self.tag_detections:
-            centers[detection_obj.tag_id] = detection_obj.center
+
+        tag_ids = (1, 2, 3, 4)
+        detections = tuple(self.tag_detections)
+        board = {
+            tag_id: [d for d in detections if int(d.tag_id) == tag_id]
+            for tag_id in tag_ids
+        }
+        if any(len(board[tag_id]) != 1 for tag_id in tag_ids):
+            return False, "Calibrate with exactly one of each board tag 1–4; move the fixture out of view."
+
+        centers = {
+            tag_id: np.asarray(board[tag_id][0].center, dtype=float).copy()
+            for tag_id in tag_ids
+        }
 
         if any(tag_id not in centers for tag_id in tag_ids):
             return False, "Board tags 1–4 must be visible."
@@ -275,10 +415,14 @@ class Camera:
         world_points = np.array([self.tag_world_points[tag_id] for tag_id in tag_ids], dtype=np.float64)
 
         image_points = np.array([centers[tag_id] for tag_id in tag_ids], dtype=np.float64)
-
+        workspace_transform = self._calculate_workspace_transform(image_points)
+        if workspace_transform is None:
+            return False, "Board tags 1–4 do not form a valid workspace rectangle."
         # breakpoint()
 
-        _, rot_vec, trans_vec = cv2.solvePnP(world_points, image_points, self.intrinsic_matrix, distCoeffs=None)
+        ok, rot_vec, trans_vec = cv2.solvePnP(world_points, image_points, self.intrinsic_matrix, distCoeffs=None)
+        if not ok:
+            return False, "solvePnP could not estimate the camera pose."
         rot_matrix, _ = cv2.Rodrigues(rot_vec)
 
         # breakpoint()
@@ -290,6 +434,8 @@ class Camera:
 
         self.extrinsic_matrix = np.linalg.inv(extr_matrix)
         self.extrinsic_matrix_inv = extr_matrix
+        self.workspace_homography, self.workspace_homography_inv = workspace_transform
+        self.board_tag_centers_px = centers
         self.camera_calibrated = True
 
 
@@ -316,10 +462,13 @@ class Camera:
 
     def camera_to_world(self, camera_point):
         """Convert a camera-frame 3D point to a world-frame 3D point."""
+        if not self.camera_calibrated:
+            return None
+        
         one = np.array([1])
         # breakpoint()
         # 
-        self.estimate_extrinsics_from_tags()
+        # self.estimate_extrinsics_from_tags()
         # print(self.camera_calibrated)
         return self.extrinsic_matrix @ np.concatenate((camera_point, one))
 
@@ -329,50 +478,96 @@ class Camera:
 
     def workspace_pixel_to_image(self, x_px, y_px):
         """Map a workspace-view pixel back to the original image pixel."""
-
-        self._update_workspace_transform()
+        if self.workspace_homography_inv is None:
+            return None
+        # self._update_workspace_transform()
         
         transformed_point = cv2.perspectiveTransform(np.array([[[x_px,y_px]]], dtype=np.float32), self.workspace_homography_inv)
         return transformed_point[0][0]
 
-    def _update_workspace_transform(self):
-        """Build the homography used for the top-down workspace view."""
-        self.workspace_homography = None
-        self.workspace_homography_inv = None
+    # def _update_workspace_transform(self):
+    #     """Build the homography used for the top-down workspace view."""
+    #     self.workspace_homography = None
+    #     self.workspace_homography_inv = None
 
-        tag_ids = [1,2,3,4]
-        source_readings = {}
-        for detection_obj in self.tag_detections:
-            if detection_obj.tag_id in tag_ids:
-                source_readings[detection_obj.tag_id] = detection_obj.center
+    #     tag_ids = [1,2,3,4]
+    #     source_readings = {}
+    #     for detection_obj in self.tag_detections:
+    #         if detection_obj.tag_id in tag_ids:
+    #             source_readings[detection_obj.tag_id] = detection_obj.center
 
-        if any(tag_id not in source_readings for tag_id in tag_ids):
-            return False
+    #     if any(tag_id not in source_readings for tag_id in tag_ids):
+    #         return False
 
-        source_readings = np.array([source_readings[tag_id] for tag_id in tag_ids],  dtype=np.float64)
+    #     source_readings = np.array([source_readings[tag_id] for tag_id in tag_ids],  dtype=np.float64)
 
-        destinations = np.array([[380, 475], 
-                        [950, 475],
-                        [950, 190],
-                        [380, 190] ])
+    #     destinations = np.array([[380, 475], 
+    #                     [950, 475],
+    #                     [950, 190],
+    #                     [380, 190] ])
 
-        #breakpoint()
+    #     #breakpoint()
 
-        H, _ = cv2.findHomography(source_readings, destinations)
+    #     H, _ = cv2.findHomography(source_readings, destinations)
 
-        self.workspace_homography = H
-        self.workspace_homography_inv = np.linalg.inv(H)
+    #     self.workspace_homography = H
+    #     self.workspace_homography_inv = np.linalg.inv(H)
 
-        return True
+    #     return True
+
+    def _calculate_workspace_transform(self, image_points):
+        """Calculate a transform from the four fixed board tags."""
+        source = np.asarray(image_points, dtype=np.float32)
+
+        if source.shape != (4, 2) or not np.all(np.isfinite(source)):
+            return None
+
+        contour = source.reshape(4, 1, 2)
+        if not cv2.isContourConvex(contour):
+            return None
+        if cv2.contourArea(contour) < 1000.0:
+            return None
+
+        destinations = np.array([
+            [380, 475],  # tag 1
+            [950, 475],  # tag 2
+            [950, 190],  # tag 3
+            [380, 190],  # tag 4
+        ], dtype=np.float32)
+
+        H = cv2.getPerspectiveTransform(source, destinations)
+        if not np.all(np.isfinite(H)):
+            return None
+
+        try:
+            H_inv = np.linalg.inv(H)
+        except np.linalg.LinAlgError:
+            return None
+
+        if not np.all(np.isfinite(H_inv)):
+            return None
+
+        return H, H_inv
         
 
-    def update_workspace_frame(self):
-        """Warp the RGB frame into the top-down workspace view."""
+    # def update_workspace_frame(self):
+    #     """Warp the RGB frame into the top-down workspace view when tags are visible."""
+    #     self.workspace_frame = self.video_frame.copy()
+    #     if self._update_workspace_transform():
+    #         height, width = self.workspace_frame.shape[:2]
+    #         self.workspace_frame = cv2.warpPerspective(self.workspace_frame, self.workspace_homography, (width, height))
 
+    def update_workspace_frame(self):
+        """Display the workspace using the transform saved at calibration."""
         self.workspace_frame = self.video_frame.copy()
 
-        if self._update_workspace_transform():
-            self.workspace_frame = cv2.warpPerspective(self.workspace_frame, self.workspace_homography, (self.workspace_frame.shape[1], self.workspace_frame.shape[0]))
+        if self.workspace_homography is not None:
+            height, width = self.workspace_frame.shape[:2]
+            self.workspace_frame = cv2.warpPerspective(
+                self.workspace_frame,
+                self.workspace_homography,
+                (width, height),
+            )
 
     def _to_qimage(self, frame):
         """Convert a NumPy RGB image into a Qt image for display."""
@@ -381,6 +576,34 @@ class Camera:
             return QImage(frame.data, w, h, frame.strides[0], QImage.Format_RGB888).copy()
         except Exception:
             return None
+
+    def find_fixture_detection(self, tolerance_px=30.0):
+        if self.board_tag_centers_px is None:
+            return None
+
+        detections = tuple(self.tag_detections)
+        board_detections = []
+
+        for tag_id, board_center in self.board_tag_centers_px.items():
+            matches = [
+                d for d in detections
+                if int(d.tag_id) == tag_id
+                and np.linalg.norm(np.asarray(d.center) - board_center) < tolerance_px
+            ]
+            if len(matches) > 1:
+                return None  # Ambiguous
+            board_detections.extend(matches)
+
+        # Since the fixture also decodes as ID 1, require the real board ID 1
+        # to be visible so we can distinguish the two safely.
+        if not any(int(d.tag_id) == 1 for d in board_detections):
+            return None
+
+        extras = [
+            d for d in detections
+            if not any(d is board_d for board_d in board_detections)
+        ]
+        return extras[0] if len(extras) == 1 else None
 
 
 class VideoThread(QThread):
@@ -439,7 +662,12 @@ class VideoThread(QThread):
             self.camera.draw_tags_in_rgb_image()
             self.camera.update_workspace_frame()
             self.camera.draw_gridlines_in_rgb_image()
-            self.camera.check_board_plane()
+            # self.camera.check_board_plane()
+
+            if self.camera.board_check_requested:
+                self.camera.board_check_requested = False
+                _, message = self.camera.check_board_plane()
+                print(message)
 
             rgb_qt   = self.camera._to_qimage(self.camera.video_frame)
             depth_qt = self.camera._to_qimage(self.camera.depth_frame_rgb)
