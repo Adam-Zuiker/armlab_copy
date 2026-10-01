@@ -215,7 +215,125 @@ def IK_geometric(dh_params, pose):
     or None if the pose is not reachable.
     """
     # TODO: student lab
-    return None
+
+    x, y, z, phi, theta, psi = pose
+
+    # link lengths (mm)
+    l1 = 243,3
+    l2 = 200
+    l3 = (87**2 + 227.6**2)**0.5
+    l6 = 61.5
+
+    target_end_effector_pos = np.array([x, y, z])
+
+    # Step 1: Find wrist center
+
+    R_z_phi = np.array([
+        [np.cos(phi), -np.sin(phi), 0],
+        [np.sin(phi), np.cos(phi), 0],
+        [0, 0, 1],
+    ])
+
+    R_y_theta = np.array([
+        [np.cos(theta), 0, np.sin(theta)],
+        [0, 1, 0],
+        [-np.sin(theta), 0, np.cos(theta)],
+    ])
+
+    R_x_psi = np.array([
+        [1, 0, 0],
+        [0, np.cos(psi),-np.sin(psi)],
+        [0, np.sin(psi), np.cos(psi)],
+    ])
+
+    R_0_6 = R_z_phi @ R_y_theta @ R_x_psi
+
+    o_c = target_end_effector_pos - l6 * R_0_6 @ np.array([0, 0, 1])
+    x_c, y_c, z_c = o_c
+
+    # Step 2: Solve joint 1
+    theta_1 = np.atan2(y, x)
+
+    # Step 3: Solve joints 2 & 3
+    r = (x_c**2 + y_c**2)**0.5
+    s = (z_c**2 - l1**2)**0.5
+    theta_3 = np.arccos(((x_c**2 + y_c**2) - l2**2 - l3**2) / (2 * l2 * l3))
+    if np.isnan(theta_3):
+        return None, "The pose is not reachable: theta_3 fails"
+    if theta_3 < JOINT_LIMITS[2][0] or theta_3 > JOINT_LIMITS[2][1]:
+        theta_3 = -theta_3
+        if theta_3 < JOINT_LIMITS[2][0] or theta_3 > JOINT_LIMITS[2][1]:
+            return None, "The pose is not reachable: theta_3 fails"
+    
+    theta_2 = np.atan2(y_c, x_c) - np.atan2(l2 * np.sin(theta_3), l2 + l3 * np.cos(theta_3))
+    if theta_2 < JOINT_LIMITS[1][0] or theta_2 > JOINT_LIMITS[1][1]:
+        return None, "The pose is not reachable: theta_2 fails"
+
+    # Step 4:  Solve joints 4, 5, & 6
+    R_0_3 = np.array([
+        [np.cos(theta_1) * np.cos(theta_2 + theta_3), -np.cos(theta_1) * np.sin(theta_2 + theta_3), np.sin(theta_1)],
+        [np.sin(theta_1) * np.cos(theta_2 + theta_3), -np.sin(theta_1) * np.sin(theta_2 + theta_3), -np.cos(theta_1)],
+        [np.sin(theta_2 + theta_3), np.cos(theta_2 + theta_3), 0],
+    ])
+
+    R_0_3_inv = np.linalg.inv(R_0_3)
+    R_3_6 = R_0_3_inv @ R_0_6
+
+    r_1_3 = R_3_6[0][2]
+    r_2_3 = R_3_6[1][2]
+    r_3_3 = R_3_6[2][2]
+    r_3_2 = R_3_6[2][1]
+    r_3_1 = R_3_6[2][0]
+    r_2_1 = R_3_6[1][0]
+    r_1_1 = R_3_6[0][0]
+
+    # Case 2
+    if  r_1_3 == 0 and r_2_3 == 0:  # theta_5 = N*pi, theta_5 in [-124, 124]
+        if r_3_3 == 1:
+            theta_5 = 0
+            theta_6 = 0
+            theta_4 = np.atan2(r_2_1, r_1_1)
+        if r_3_3 == -1:
+            return None, "The pose is not reachable: theta_5 check fails in Case 2"
+
+    # Case 1
+    else:
+
+        pos_sin_theta = (1 - r_3_3**2)**0.5
+        neg_sin_theta = -pos_sin_theta
+
+        theta_5_neg = np.atan2(neg_sin_theta, r_3_3)
+        theta_5_pos = np.atan2(pos_sin_theta, r_3_3)
+
+        # check theta cases
+        if theta_5_pos <= JOINT_LIMITS[4][1] and theta_5_pos >= JOINT_LIMITS[4][0]:
+            theta_4 = np.atan2(r_2_3, r_1_3)
+            theta_5 = theta_5_pos
+            theta_6 = np.atan2(r_3_2, -r_3_1)
+
+        elif theta_5_neg >= JOINT_LIMITS[4][0] and theta_5_neg >= JOINT_LIMITS[4][0]:
+            theta_4 = np.atan2(-r_2_3, -r_1_3)
+            theta_5 = theta_5_neg
+            theta_6 = np.atan2(-r_3_2, r_3_1)
+
+        else:
+            return None, "The pose is not reachable: fails theta_5 in Case 1"
+
+    joint_angles = np.array([theta_1, theta_2, theta_3, theta_4, theta_5, theta_6])
+
+    H_0_6 = FK_pox(joint_angles, M, S_list)
+
+    FK_pos = H_0_6[:3, -1]
+    pos_err = np.linalg.norm(FK_pos - pose[:3])
+
+    R_FK = H_0_6[:3, :3]
+    R_err = R_FK @ R_0_6.T
+    angle_err = np.arcos(np.clip(np.trace(R_err) - 1) / 2, -1, -1)
+
+    if pos_err >= 1 or angle_err >= 0.1:
+        return None, "The pose is not reachable: doesn't pass FK check"
+
+    return joint_angles
 
 
 # ======================================================================
