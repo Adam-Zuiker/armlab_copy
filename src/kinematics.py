@@ -10,6 +10,8 @@ import numpy as np
 from scipy.linalg import expm
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation as R
+from scipy.differentiate import jacobian
+from scipy import linalg
 
 
 # ======================================================================
@@ -173,8 +175,11 @@ def FK_pox(joint_angles_rad, m_mat, s_lst):
     Returns 4x4 homogeneous transform (base -> end-effector).
     """
     H = np.eye(4)
+
     for i, s in enumerate(s_lst):
+        breakpoint()
         H = H @ to_s_matrix(s[:3], s[3:], joint_angles_rad[i])
+    
     return H @ m_mat
 
 # ======================================================================
@@ -219,7 +224,7 @@ def IK_geometric(dh_params, pose):
     x, y, z, phi, theta, psi = pose
 
     # link lengths (mm)
-    l1 = 243,3
+    l1 = 243.3
     l2 = 200
     l3 = (87**2 + 227.6**2)**0.5
     l6 = 61.5
@@ -328,7 +333,7 @@ def IK_geometric(dh_params, pose):
 
     R_FK = H_0_6[:3, :3]
     R_err = R_FK @ R_0_6.T
-    angle_err = np.arcos(np.clip(np.trace(R_err) - 1) / 2, -1, -1)
+    angle_err = np.acos(np.clip(a = (np.trace(R_err) - 1) / 2, a_min = -1, a_max = 1))
 
     if pos_err >= 1 or angle_err >= 0.1:
         return None, "The pose is not reachable: doesn't pass FK check"
@@ -360,7 +365,61 @@ def IK_numerical(dh_params, pose, q0=None, joint_limits=None, w_rot=200.0):
     or None if the pose is not reachable.
     """
     # TODO: student lab
-    return None
+    if q0 is None:
+        q0 = Q_DEFAULT
+    fk_initial = FK_pox(q0, M, S_list)
+
+    if joint_limits is None:
+        joint_limits = JOINT_LIMITS
+
+    pos_error = pose[:3] - fk_initial[:3, -1]
+
+    rotation = R.from_euler('zyx', [pose[5], pose[4], pose[3]], degrees = False)
+    rotation_matrix = rotation.as_matrix()
+    rot_error = rotation_matrix @ fk_initial[0:3, 0:3].T
+    rot_error_obj = R.from_matrix(rot_error)
+    rotvec = rot_error_obj.as_rotvec()
+    residual = np.concatenate([pos_error, rotvec * w_rot])
+
+    def fk_helper(q0_1):
+        return np.array(get_pose_from_T(FK_pox(q0_1, M, S_list))).reshape(1, -1)
+
+    # breakpoint()
+    J = jacobian(fk_helper, q0.reshape(1, -1))
+
+    J_inv = linalg.pinv(J)
+
+    e = 0.001
+
+    count = 0
+    max_steps = 10000
+
+    while np.linalg.norm(residual) < e:
+        q0_next = q0 + J_inv @ residual
+        # breakpoint()
+        q0 = q0_next
+
+        np.clip(q0, joint_limits[:, 0], joint_limits[:, 1])
+
+        fk = FK_pox(q0, M, S_list)
+        
+        pos_error = pose[:3] - fk[:3, -1]
+        
+        rotation = R.from_euler('zyx', [pose[5], pose[4], pose[3]], degrees = False)
+        rotation_matrix = rotation.as_matrix()
+        rot_error = rotation_matrix @ fk[0:3, 0:3].T
+        rotvec = rot_error.as_rotvec()
+        residual = np.concatenate([pos_error, rotvec * w_rot])
+
+        J = jacobian(FK_pox, q0)
+        J_inv = linalg.pinv(J)
+
+        count += 1
+        if count >= max_steps:
+            return None
+
+
+    return q0
 
 
 # ======================================================================
