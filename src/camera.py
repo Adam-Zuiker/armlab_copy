@@ -605,6 +605,60 @@ class Camera:
         ]
         return extras[0] if len(extras) == 1 else None
 
+    def warp_depth_image(self):
+        self.depth_frame_topdown = self.depth_frame_rgb.copy()
+        
+        if self.workspace_homography is not None:
+            height, width = self.depth_frame_topdown.shape[:2]
+            self.depth_frame_topdown = cv2.warpPerspective(
+                self.depth_frame_topdown,
+                self.workspace_homography,
+                (width, height),
+            )
+
+        self.flatten_depth_topdown()
+
+    def flatten_depth_topdown(self):
+
+        
+
+        tag_center_locations = []
+        
+        for detection_obj in self.tag_detections:
+            curr_center = np.floor(detection_obj.center).astype(int)
+            curr_z = self.depth_frame_raw[curr_center[0]][curr_center[1]]
+            # breakpoint()
+            tag_center_locations.append([curr_center[0], curr_center[1], curr_z])
+
+        breakpoint()
+
+        # A = np.zeros((4, 3))
+        # b = np.zeros((4, 1))
+
+        # for i in range(4):
+        #     A[i, 0] = tag_center_locations[i][0]
+        #     A[i, 1] = tag_center_locations[i][1]
+        #     A[i, 2] = 1
+
+        #     b[i] = tag_center_locations[i][2]
+
+        # x = np.linalg.inv(A.T @ A) @ A.T @ b
+
+        # self.depth_frame_topdown_raw = self.depth_frame_raw.copy()
+
+        # for x in self.depth_frame_topdown_raw.shape[0]:
+        #     for y in self.depth_frame_topdown_raw.shape[1]:
+        #         xm, ym, zm 
+                
+
+
+
+
+        
+        
+        
+        
+
 
 class VideoThread(QThread):
     """Polls the RealSense pipeline at ~30 Hz and emits Qt signals for the GUI."""
@@ -664,13 +718,15 @@ class VideoThread(QThread):
             self.camera.draw_gridlines_in_rgb_image()
             # self.camera.check_board_plane()
 
+            self.camera.warp_depth_image()
+
             if self.camera.board_check_requested:
                 self.camera.board_check_requested = False
                 _, message = self.camera.check_board_plane()
                 print(message)
 
             rgb_qt   = self.camera._to_qimage(self.camera.video_frame)
-            depth_qt = self.camera._to_qimage(self.camera.depth_frame_rgb)
+            depth_qt = self.camera._to_qimage(self.camera.depth_frame_topdown)
             tag_qt   = self.camera._to_qimage(self.camera.tag_image_frame)
             workspace_qt = self.camera._to_qimage(self.camera.workspace_frame)
             heatmap_qt = self.camera._to_qimage(self.camera.heatmap)
