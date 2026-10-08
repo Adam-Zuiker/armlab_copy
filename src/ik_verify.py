@@ -15,12 +15,17 @@ def get_joint_vectors(size):
         joint_5 = np.radians(random.uniform(-124, 124))
         joint_6 = np.radians(random.uniform(-360, 360))
 
-        vector.extend([joint_1, joint_2, joint_3, 
+        vector.extend([joint_1, joint_2, joint_3,
                              joint_4, joint_5, joint_6])
 
         joint_limits.append(vector)
 
     return joint_limits
+
+
+def orientation_error(R_a, R_b):
+    """Angle of the rotation taking R_b to R_a, in radians."""
+    return np.linalg.norm(R.from_matrix(R_a @ R_b.T).as_rotvec())
 
 
 def pose_solver(dh_params, size):
@@ -33,6 +38,9 @@ def pose_solver(dh_params, size):
     errors_orientation_geom = []
     errors_orientation_num = []
 
+    failures_geom = 0
+    failures_num = 0
+
     for joint_vector in joint_limits:
 
         fk_matrix = FK_pox(joint_vector, M, S_list)
@@ -43,36 +51,25 @@ def pose_solver(dh_params, size):
         ik_geom = IK_geometric(dh_params, fk_pose)
         ik_num = IK_numerical(dh_params, fk_pose)
 
-        final_pose_geom = get_pose_from_T(FK_pox(ik_geom))
-        final_pose_num = get_pose_from_T(FK_pox(ik_num))
+        # IK Geometric
+        if ik_geom is None:
+            failures_geom += 1
+        else:
+            final_geom = FK_pox(ik_geom, M, S_list)
+            errors_pos_geom.append(np.linalg.norm(final_geom[:3, 3] - fk_matrix[:3, 3]))
+            errors_orientation_geom.append(orientation_error(final_geom[:3, :3], fk_matrix[:3, :3]))
 
-        # position error
-        pos_final_geom = final_pose_geom[0:3]
-        error_pos_geom = np.linalg.norm(pos_final_geom - fk_pose[0:3])
+        # IK Numerical
+        if ik_num is None:
+            failures_num += 1
+        else:
+            final_num = FK_pox(ik_num, M, S_list)
+            errors_pos_num.append(np.linalg.norm(final_num[:3, 3] - fk_matrix[:3, 3]))
+            errors_orientation_num.append(orientation_error(final_num[:3, :3], fk_matrix[:3, :3]))
 
-        errors_pos_geom.append(error_pos_geom)
-
-        pos_final_num = final_pose_num[0:3]
-        error_pos_num = np.linalg.norm(pos_final_num - fk_pose[0:3])
-
-        errors_pos_num.append(error_pos_num)
-
-        # orientation error - IK Geometric
-        rotation = R.from_euler('zyx', [final_pose_geom[5], final_pose_geom[4], final_pose_geom[3]], degrees = False)
-        rotation_matrix = rotation.as_matrix()
-        rot_error = rotation_matrix @ fk_pose[0:3, 0:3].T
-        rotvec_error_geom = np.linalg.norm(rot_error.as_rotvec())
-
-        errors_orientation_geom.append(rotvec_error_geom)
-
-        # orientation error - IK Numerical
-        rotation = R.from_euler('zyx', [final_pose_geom[5], final_pose_geom[4], final_pose_geom[3]], degrees = False)
-        rotation_matrix = rotation.as_matrix()
-        rot_error = rotation_matrix @ fk_pose[0:3, 0:3].T
-        rotvec_error_geom = np.linalg.norm(rot_error.as_rotvec())
-
-        errors_orientation_geom.append(rotvec_error_geom)
-
+    print(f"Geometric IK solved {size - failures_geom}/{size} poses")
+    print(f"Numerical IK solved {size - failures_num}/{size} poses")
+    print("\n")
     print("Position Errors")
     print(f"Mean Position Error for Geometric IK solver: {np.mean(errors_pos_geom)} mm")
     print(f"Max Position Error for Geometric IK solver: {np.max(errors_pos_geom)} mm")
@@ -87,11 +84,3 @@ def pose_solver(dh_params, size):
 
 if __name__ == "__main__":
     pose_solver(DH_STD, 500)
-
-
-    
-
-    
-
-
-

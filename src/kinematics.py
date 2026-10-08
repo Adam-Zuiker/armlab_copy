@@ -10,8 +10,6 @@ import numpy as np
 from scipy.linalg import expm
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation as R
-from scipy.differentiate import jacobian
-from scipy import linalg
 
 
 # ======================================================================
@@ -177,9 +175,8 @@ def FK_pox(joint_angles_rad, m_mat, s_lst):
     H = np.eye(4)
 
     for i, s in enumerate(s_lst):
-        breakpoint()
         H = H @ to_s_matrix(s[:3], s[3:], joint_angles_rad[i])
-    
+
     return H @ m_mat
 
 # ======================================================================
@@ -219,126 +216,77 @@ def IK_geometric(dh_params, pose):
     Returns joint angles in radians as a numpy array of length 6,
     or None if the pose is not reachable.
     """
-    # TODO: student lab
-
-    x, y, z, phi, theta, psi = pose
+    x, y, z = pose[:3]
 
     # link lengths (mm)
-    l1 = 243.3
-    l2 = 200
-    l3 = (87**2 + 227.6**2)**0.5
-    l6 = 61.5
-
-    target_end_effector_pos = np.array([x, y, z])
+    l1 = 243.3                          # base to joint 2
+    l2 = 200.0                          # joint 2 to joint 3
+    l3 = np.hypot(87.0, 227.6)          # joint 3 to wrist center
+    l6 = 61.5                           # wrist center to end-effector
+    # angle between the upper arm and the forearm when theta_3 = 0
+    gamma = np.pi / 2 + np.arctan2(227.6, 87.0)
 
     # Step 1: Find wrist center
+    # pose[3:] is roll, pitch, yaw about fixed x, y, z (same as get_pose_from_T),
+    # so R_0_6 = Rz(yaw) @ Ry(pitch) @ Rx(roll)
+    R_0_6 = R.from_euler('xyz', pose[3:]).as_matrix()
+    x_c, y_c, z_c = np.array([x, y, z]) - l6 * R_0_6[:, 2]
 
-    R_z_phi = np.array([
-        [np.cos(phi), -np.sin(phi), 0],
-        [np.sin(phi), np.cos(phi), 0],
-        [0, 0, 1],
-    ])
+    # Step 2: Solve joint 1 - try facing the wrist center, then reaching back over the base
+    r_c = np.hypot(x_c, y_c)
+    for theta_1, r in ((np.arctan2(y_c, x_c), r_c), (np.arctan2(y_c, x_c) + np.pi, -r_c)):
+        theta_1 = (theta_1 + np.pi) % (2 * np.pi) - np.pi
 
-    R_y_theta = np.array([
-        [np.cos(theta), 0, np.sin(theta)],
-        [0, 1, 0],
-        [-np.sin(theta), 0, np.cos(theta)],
-    ])
+        # Step 3: Solve joints 2 & 3 in the arm plane (r out, s up from joint 2)
+        s = z_c - l1
+        D = (r**2 + s**2 - l2**2 - l3**2) / (2 * l2 * l3)
+        if abs(D) > 1:
+            print("IK_geometric: the pose is not reachable - wrist center out of reach")
+            return None
 
-    R_x_psi = np.array([
-        [1, 0, 0],
-        [0, np.cos(psi),-np.sin(psi)],
-        [0, np.sin(psi), np.cos(psi)],
-    ])
+        for elbow in (-1, 1):
+            # joint 3 turns the forearm about -y, so the upper-arm/forearm angle is theta_3 - gamma
+            delta = elbow * np.arccos(D)
+            theta_3 = (gamma + delta + np.pi) % (2 * np.pi) - np.pi
+            if theta_3 < JOINT_LIMITS[2][0]:
+                theta_3 += 2 * np.pi
+            # joint 2 tips the upper arm forward from vertical (about +y)
+            upper_arm = np.arctan2(s, r) - np.arctan2(l3 * np.sin(delta), l2 + l3 * np.cos(delta))
+            theta_2 = (np.pi / 2 - upper_arm + np.pi) % (2 * np.pi) - np.pi
+            if not (JOINT_LIMITS[1][0] <= theta_2 <= JOINT_LIMITS[1][1]
+                    and JOINT_LIMITS[2][0] <= theta_3 <= JOINT_LIMITS[2][1]):
+                continue
 
-    R_0_6 = R_z_phi @ R_y_theta @ R_x_psi
+            # Step 4: Solve joints 4, 5, & 6
+            # With this DH table, R_3_6 = Rz(theta_4) @ Ry(-theta_5) @ Rz(theta_6)
+            # DH_STD rather than dh_params: the real arm passes the SDK's table, whose layout may differ
+            R_0_3 = FK_dh(DH_STD[:3], [theta_1, theta_2, theta_3], 3)[:3, :3]
+            R_3_6 = R_0_3.T @ R_0_6
+            sin_5 = np.hypot(R_3_6[0, 2], R_3_6[1, 2])
 
-    o_c = target_end_effector_pos - l6 * R_0_6 @ np.array([0, 0, 1])
-    x_c, y_c, z_c = o_c
+            for sign in (1, -1):    # theta_5 > 0 first, then theta_5 < 0
+                theta_5 = np.arctan2(sign * sin_5, R_3_6[2, 2])
+                if not (JOINT_LIMITS[4][0] <= theta_5 <= JOINT_LIMITS[4][1]):
+                    continue
+                if sin_5 < 1e-9:
+                    # wrist singularity (theta_5 = 0): only theta_4 + theta_6 matters
+                    theta_4 = 0.0
+                    theta_6 = np.arctan2(R_3_6[1, 0], R_3_6[0, 0])
+                else:
+                    theta_4 = np.arctan2(-sign * R_3_6[1, 2], -sign * R_3_6[0, 2])
+                    theta_6 = np.arctan2(-sign * R_3_6[2, 1], sign * R_3_6[2, 0])
 
-    # Step 2: Solve joint 1
-    theta_1 = np.atan2(y, x)
+                joint_angles = np.array([theta_1, theta_2, theta_3, theta_4, theta_5, theta_6])
 
-    # Step 3: Solve joints 2 & 3
-    r = (x_c**2 + y_c**2)**0.5
-    s = (z_c**2 - l1**2)**0.5
-    theta_3 = np.arccos(((x_c**2 + y_c**2) - l2**2 - l3**2) / (2 * l2 * l3))
-    if np.isnan(theta_3):
-        return None, "The pose is not reachable: theta_3 fails"
-    if theta_3 < JOINT_LIMITS[2][0] or theta_3 > JOINT_LIMITS[2][1]:
-        theta_3 = -theta_3
-        if theta_3 < JOINT_LIMITS[2][0] or theta_3 > JOINT_LIMITS[2][1]:
-            return None, "The pose is not reachable: theta_3 fails"
-    
-    theta_2 = np.atan2(y_c, x_c) - np.atan2(l2 * np.sin(theta_3), l2 + l3 * np.cos(theta_3))
-    if theta_2 < JOINT_LIMITS[1][0] or theta_2 > JOINT_LIMITS[1][1]:
-        return None, "The pose is not reachable: theta_2 fails"
+                # FK check
+                H_0_6 = FK_pox(joint_angles, M, S_list)
+                pos_err = np.linalg.norm(H_0_6[:3, 3] - np.array([x, y, z]))
+                angle_err = np.linalg.norm(R.from_matrix(H_0_6[:3, :3] @ R_0_6.T).as_rotvec())
+                if pos_err < 1e-3 and angle_err < 1e-6:
+                    return joint_angles
 
-    # Step 4:  Solve joints 4, 5, & 6
-    R_0_3 = np.array([
-        [np.cos(theta_1) * np.cos(theta_2 + theta_3), -np.cos(theta_1) * np.sin(theta_2 + theta_3), np.sin(theta_1)],
-        [np.sin(theta_1) * np.cos(theta_2 + theta_3), -np.sin(theta_1) * np.sin(theta_2 + theta_3), -np.cos(theta_1)],
-        [np.sin(theta_2 + theta_3), np.cos(theta_2 + theta_3), 0],
-    ])
-
-    R_0_3_inv = np.linalg.inv(R_0_3)
-    R_3_6 = R_0_3_inv @ R_0_6
-
-    r_1_3 = R_3_6[0][2]
-    r_2_3 = R_3_6[1][2]
-    r_3_3 = R_3_6[2][2]
-    r_3_2 = R_3_6[2][1]
-    r_3_1 = R_3_6[2][0]
-    r_2_1 = R_3_6[1][0]
-    r_1_1 = R_3_6[0][0]
-
-    # Case 2
-    if  r_1_3 == 0 and r_2_3 == 0:  # theta_5 = N*pi, theta_5 in [-124, 124]
-        if r_3_3 == 1:
-            theta_5 = 0
-            theta_6 = 0
-            theta_4 = np.atan2(r_2_1, r_1_1)
-        if r_3_3 == -1:
-            return None, "The pose is not reachable: theta_5 check fails in Case 2"
-
-    # Case 1
-    else:
-
-        pos_sin_theta = (1 - r_3_3**2)**0.5
-        neg_sin_theta = -pos_sin_theta
-
-        theta_5_neg = np.atan2(neg_sin_theta, r_3_3)
-        theta_5_pos = np.atan2(pos_sin_theta, r_3_3)
-
-        # check theta cases
-        if theta_5_pos <= JOINT_LIMITS[4][1] and theta_5_pos >= JOINT_LIMITS[4][0]:
-            theta_4 = np.atan2(r_2_3, r_1_3)
-            theta_5 = theta_5_pos
-            theta_6 = np.atan2(r_3_2, -r_3_1)
-
-        elif theta_5_neg >= JOINT_LIMITS[4][0] and theta_5_neg >= JOINT_LIMITS[4][0]:
-            theta_4 = np.atan2(-r_2_3, -r_1_3)
-            theta_5 = theta_5_neg
-            theta_6 = np.atan2(-r_3_2, r_3_1)
-
-        else:
-            return None, "The pose is not reachable: fails theta_5 in Case 1"
-
-    joint_angles = np.array([theta_1, theta_2, theta_3, theta_4, theta_5, theta_6])
-
-    H_0_6 = FK_pox(joint_angles, M, S_list)
-
-    FK_pos = H_0_6[:3, -1]
-    pos_err = np.linalg.norm(FK_pos - pose[:3])
-
-    R_FK = H_0_6[:3, :3]
-    R_err = R_FK @ R_0_6.T
-    angle_err = np.acos(np.clip(a = (np.trace(R_err) - 1) / 2, a_min = -1, a_max = 1))
-
-    if pos_err >= 1 or angle_err >= 0.1:
-        return None, "The pose is not reachable: doesn't pass FK check"
-
-    return joint_angles
+    print("IK_geometric: the pose is not reachable - no solution within joint limits")
+    return None
 
 
 # ======================================================================
@@ -364,62 +312,28 @@ def IK_numerical(dh_params, pose, q0=None, joint_limits=None, w_rot=200.0):
     Returns joint angles in radians as a numpy array of length 6,
     or None if the pose is not reachable.
     """
-    # TODO: student lab
     if q0 is None:
         q0 = Q_DEFAULT
-    fk_initial = FK_pox(q0, M, S_list)
-
     if joint_limits is None:
         joint_limits = JOINT_LIMITS
 
-    pos_error = pose[:3] - fk_initial[:3, -1]
+    p_target = np.asarray(pose[:3], dtype=float)
+    R_target = R.from_euler('xyz', pose[3:]).as_matrix()
 
-    rotation = R.from_euler('zyx', [pose[5], pose[4], pose[3]], degrees = False)
-    rotation_matrix = rotation.as_matrix()
-    rot_error = rotation_matrix @ fk_initial[0:3, 0:3].T
-    rot_error_obj = R.from_matrix(rot_error)
-    rotvec = rot_error_obj.as_rotvec()
-    residual = np.concatenate([pos_error, rotvec * w_rot])
+    def residual(q):
+        T = FK_pox(q, M, S_list)
+        pos_error = T[:3, 3] - p_target
+        rot_error = R.from_matrix(T[:3, :3] @ R_target.T).as_rotvec()
+        return np.concatenate([pos_error, w_rot * rot_error])
 
-    def fk_helper(q0_1):
-        return np.array(get_pose_from_T(FK_pox(q0_1, M, S_list))).reshape(1, -1)
+    q0 = np.clip(q0, joint_limits[:, 0], joint_limits[:, 1])
+    result = least_squares(residual, q0, bounds=(joint_limits[:, 0], joint_limits[:, 1]),
+                           method='trf', xtol=1e-12, ftol=1e-12, gtol=1e-12)
 
-    # breakpoint()
-    J = jacobian(fk_helper, q0.reshape(1, -1))
-
-    J_inv = linalg.pinv(J)
-
-    e = 0.001
-
-    count = 0
-    max_steps = 10000
-
-    while np.linalg.norm(residual) < e:
-        q0_next = q0 + J_inv @ residual
-        # breakpoint()
-        q0 = q0_next
-
-        np.clip(q0, joint_limits[:, 0], joint_limits[:, 1])
-
-        fk = FK_pox(q0, M, S_list)
-        
-        pos_error = pose[:3] - fk[:3, -1]
-        
-        rotation = R.from_euler('zyx', [pose[5], pose[4], pose[3]], degrees = False)
-        rotation_matrix = rotation.as_matrix()
-        rot_error = rotation_matrix @ fk[0:3, 0:3].T
-        rotvec = rot_error.as_rotvec()
-        residual = np.concatenate([pos_error, rotvec * w_rot])
-
-        J = jacobian(FK_pox, q0)
-        J_inv = linalg.pinv(J)
-
-        count += 1
-        if count >= max_steps:
-            return None
-
-
-    return q0
+    # reject local minima that never reached the pose (1 mm, ~0.5 deg)
+    if np.linalg.norm(result.fun[:3]) > 1.0 or np.linalg.norm(result.fun[3:]) / w_rot > 0.01:
+        return None
+    return result.x
 
 
 # ======================================================================
