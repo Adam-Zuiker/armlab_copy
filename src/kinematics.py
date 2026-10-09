@@ -175,7 +175,7 @@ def FK_pox(joint_angles_rad, m_mat, s_lst):
     H = np.eye(4)
 
     for i, s in enumerate(s_lst):
-        H = H @ to_s_matrix(s[:3], s[3:], joint_angles_rad[i])
+            H = H @ to_s_matrix(s[:3], s[3:], joint_angles_rad[i])
 
     return H @ m_mat
 

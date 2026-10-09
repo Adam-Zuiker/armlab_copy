@@ -1,6 +1,6 @@
 import random
 from kinematics import *
-# from lite6arm import Lite6Arm
+from lite6arm import Lite6Arm
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.patches import Rectangle
@@ -56,7 +56,11 @@ def pose_solver(dh_params, size, arm):
 
         ik_geom = IK_geometric(dh_params, fk_pose)
         ik_num = IK_numerical(dh_params, fk_pose)
-        ik_vendor = arm.xarm.get_inverse_kinematics(fk_pose)[1]
+        ik_vendor = arm.xarm.get_inverse_kinematics(fk_pose, input_is_radian=True, return_is_radian=True)
+        # if not len(ik_vendor[1]):
+        #     breakpoint()
+        ik_vendor = ik_vendor[1]
+        
 
         # IK Geometric
         if ik_geom is None:
@@ -75,7 +79,7 @@ def pose_solver(dh_params, size, arm):
             errors_orientation_num.append(orientation_error(final_num[:3, :3], fk_matrix[:3, :3]))
 
         # IK Vendor
-        if ik_vendor is None:
+        if ik_vendor is None or not len(ik_vendor):
             failures_vendor += 1
         else:
             final_vendor = FK_pox(ik_vendor, M, S_list)
@@ -97,12 +101,12 @@ def pose_solver(dh_params, size, arm):
     print("Orientation Errors")
     print(f"Mean Orientation Error for Geometric IK solver: {np.mean(errors_orientation_geom)} rad")
     print(f"Max Orientation Error for Geometric IK solver: {np.max(errors_orientation_geom)} rad")
-    print(f"Mean Orientation Error for Numerical IK sovler: {np.mean(errors_orientation_num)} rad")
-    print(f"Max Orientation Error for Numerical IK solver: {np.max(errors_orientation_num)} rad")
+    # print(f"Mean Orientation Error for Numerical IK sovler: {np.mean(errors_orientation_num)} rad")
+    # print(f"Max Orientation Error for Numerical IK solver: {np.max(errors_orientation_num)} rad")
     print(f"Mean Orientation Error for Vendor IK sovler: {np.mean(errors_orientation_vendor)} rad")
     print(f"Max Orientation Error for Vendor IK solver: {np.max(errors_orientation_vendor)} rad")
 
-def create_reachability_map(dh_params, block_size):
+def create_reachability_map(dh_params, block_size, arm=None):
     # define flange pose [0, 0, z, phi, theta, psi] for 38 mm block
     reachable = {}
     z = 85 + block_size / 2
@@ -110,14 +114,22 @@ def create_reachability_map(dh_params, block_size):
     for x in range(0, 500, 10):
         for y in range(-500, 500, 10):
             pose_0 = [x, y, z, np.pi, 0, 0]
-            ik_geom_0 = IK_geometric(dh_params, pose_0)
             pose_90 = [x, y, z, np.pi, 0, np.pi/2]
-            ik_geom_90 = IK_geometric(dh_params, pose_90)
+            if arm is None:
+                ik_geom_0 = IK_geometric(dh_params, pose_0)
+                ik_geom_90 = IK_geometric(dh_params, pose_90)
+                if ik_geom_0 is not None and ik_geom_90 is not None:
+                    reachable[(x, y)] = True
+                else:
+                    reachable[(x, y)] = False
+            if arm is not None:
+                ik_geom_0 = arm.xarm.get_inverse_kinematics(pose_0, input_is_radian=True)
+                ik_geom_90 = arm.xarm.get_inverse_kinematics(pose_90, input_is_radian=True)
+                if len(ik_geom_0[1]) and len(ik_geom_90[1]):
+                    reachable[(x, y)] = True
+                else:
+                    reachable[(x, y)] = False
 
-            if ik_geom_0 is not None and ik_geom_90 is not None:
-                reachable[(x, y)] = True
-            else:
-                reachable[(x, y)] = False
     plot_reachability(reachable, block_size)
 
 def plot_reachability(reachable, block_size):
@@ -158,7 +170,27 @@ def plot_reachability(reachable, block_size):
 
 
 if __name__ == "__main__":
-    # arm = Lite6Arm()
-    # pose_solver(DH_STD, 500, arm)
+    arm = Lite6Arm()
+    pose_solver(DH_STD, 500, arm)
     create_reachability_map(DH_STD, 38)
     create_reachability_map(DH_STD, 25)
+    # create_reachability_map(DH_STD, 25, arm)
+    # q = [0.3, 0.3, 0.5, 0.2, 0.8, 0.2]   # adjust to your model's limits; add a 7th for xArm7
+
+    # code_fk, arm_pose = arm.xarm.get_forward_kinematics(
+    #     q, input_is_radian=True, return_is_radian=True)
+    # print("FK code:", code_fk, "pose:", arm_pose)
+    # fk_matrix = FK_pox(q, M, S_list)
+    # # convert to pose from homogenous matrix
+    # fk_pose = get_pose_from_T(fk_matrix)
+    # print("POX pose:", fk_pose)
+
+
+    # pose = [float(x) for x in arm_pose]   # plain Python floats, not numpy types
+    # code_ik, sol = arm.xarm.get_inverse_kinematics(
+    #     pose, input_is_radian=True, return_is_radian=True)
+    # print("IK code:", code_ik, "solution:", sol)
+    # code_ik, sol = arm.xarm.get_inverse_kinematics(
+    #         fk_pose, input_is_radian=True, return_is_radian=True)
+    # print("IK code:", code_ik, "solution:", sol)
+
