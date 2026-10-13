@@ -4,6 +4,9 @@ DO NOT MODIFY BY HAND!!!!
 lcm-gen 1.5.1
 """
 
+from .sim_reset_t import sim_reset_t as sim_reset_t
+from .sim_world_t import sim_world_t as sim_world_t
 from .ufactory_lite6_control_t import ufactory_lite6_control_t as ufactory_lite6_control_t
 from .ufactory_lite6_display_t import ufactory_lite6_display_t as ufactory_lite6_display_t
+from .ufactory_lite6_gripper_t import ufactory_lite6_gripper_t as ufactory_lite6_gripper_t
 from .ufactory_lite6_state_t import ufactory_lite6_state_t as ufactory_lite6_state_t
