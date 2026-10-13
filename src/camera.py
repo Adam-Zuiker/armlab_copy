@@ -606,56 +606,81 @@ class Camera:
         return extras[0] if len(extras) == 1 else None
 
     def warp_depth_image(self):
-        self.depth_frame_topdown = self.depth_frame_rgb.copy()
+        self.depth_frame_topdown_raw = self.depth_frame_raw.copy()
         
         if self.workspace_homography is not None:
-            height, width = self.depth_frame_topdown.shape[:2]
-            self.depth_frame_topdown = cv2.warpPerspective(
-                self.depth_frame_topdown,
+            height, width = self.depth_frame_topdown_raw.shape[:2]
+            self.depth_frame_topdown_raw = cv2.warpPerspective(
+                self.depth_frame_topdown_raw,
                 self.workspace_homography,
                 (width, height),
+                flags=cv2.INTER_NEAREST
             )
 
         self.flatten_depth_topdown()
 
+    def colorize_depth_frame_topdown(self, depth_lo_mm=300.0, depth_hi_mm=1200.0):
+            # Jet colormap (blue=near, red=far); pixels outside range masked black.
+            depth_mm = self.depth_frame_topdown_raw.astype(np.float32) * self.depth_scale_mm
+            in_range = (depth_mm >= depth_lo_mm) & (depth_mm <= depth_hi_mm)
+    
+            normalized = np.zeros(depth_mm.shape, dtype=np.uint8)
+            normalized[in_range] = np.clip(
+                (depth_mm[in_range] - depth_lo_mm) / (depth_hi_mm - depth_lo_mm) * 255.0,
+                0, 255,
+            ).astype(np.uint8)
+    
+            colorized = cv2.applyColorMap(normalized, cv2.COLORMAP_JET)
+            colorized = cv2.cvtColor(colorized, cv2.COLOR_BGR2RGB)
+            colorized[~in_range] = 0
+    
+            self.depth_frame_topdown_rgb = colorized
+    
+
     def flatten_depth_topdown(self):
 
-        
+        TABLE_SAMPLE_PIXEL = np.array([
+            [380, 475],  # tag 1
+            [950, 475],  # tag 2
+            [950, 190],  # tag 3
+            [380, 190],  # tag 4
+        ])
 
-        tag_center_locations = []
-        
-        for detection_obj in self.tag_detections:
-            curr_center = np.floor(detection_obj.center).astype(int)
-            curr_z = self.depth_frame_raw[curr_center[0]][curr_center[1]]
-            # breakpoint()
-            tag_center_locations.append([curr_center[0], curr_center[1], curr_z])
+        sample_us = []
+        sample_vs = []
+        sample_depths = []
+        for (u, v) in TABLE_SAMPLE_PIXEL:
+            depth = self.depth_frame_topdown_raw[v, u]
+            sample_us.append(u)
+            sample_vs.append(v)
+            sample_depths.append(depth)
 
-        breakpoint()
+        A = np.column_stack((sample_us, sample_vs, np.ones(4)))
 
-        # A = np.zeros((4, 3))
-        # b = np.zeros((4, 1))
+        (a, b, c), *_ = np.linalg.lstsq(A, np.array(sample_depths))
 
-        # for i in range(4):
-        #     A[i, 0] = tag_center_locations[i][0]
-        #     A[i, 1] = tag_center_locations[i][1]
-        #     A[i, 2] = 1
+        H, W = self.depth_frame_topdown_raw.shape
+        U, V = np.meshgrid(np.arange(W), np.arange(H))
+        plane = a * U + b * V + c
 
-        #     b[i] = tag_center_locations[i][2]
-
-        # x = np.linalg.inv(A.T @ A) @ A.T @ b
-
-        # self.depth_frame_topdown_raw = self.depth_frame_raw.copy()
-
-        # for x in self.depth_frame_topdown_raw.shape[0]:
-        #     for y in self.depth_frame_topdown_raw.shape[1]:
-        #         xm, ym, zm 
-                
+        # self.height = np.where(self.depth_frame_topdown_raw > 0, plane - self.depth_frame_topdown_raw, 0.0).astype(np.float32)
+        self.table_depth_raw = np.mean(sample_depths)
+        self.depth_frame_topdown_raw = np.where(self.depth_frame_topdown_raw > 0, self.depth_frame_topdown_raw - plane + self.table_depth_raw, 0.0)
+        self.colorize_depth_frame_topdown()
 
 
+    def find_contours(self, h_lo_mm, h_hi_mm):
 
+        height_mm = np.where(self.depth_frame_raw > 0, (self.table_depth_raw - self.depth_frame_topdown_raw) * self.depth_scale_mm, 0.0)
 
-        
-        
+        mask = ((height_mm > h_lo_mm) & (height_mm < h_hi_mm)).astype(np.uint8) * 255
+
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+
+        self.block_contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        cv2.drawContours(self.workspace_frame, self.block_contours, -1, (0, 255, 0), 2)
         
         
 
@@ -719,6 +744,8 @@ class VideoThread(QThread):
             # self.camera.check_board_plane()
 
             self.camera.warp_depth_image()
+            self.camera.find_contours()
+            
 
             if self.camera.board_check_requested:
                 self.camera.board_check_requested = False
@@ -726,7 +753,7 @@ class VideoThread(QThread):
                 print(message)
 
             rgb_qt   = self.camera._to_qimage(self.camera.video_frame)
-            depth_qt = self.camera._to_qimage(self.camera.depth_frame_topdown)
+            depth_qt = self.camera._to_qimage(self.camera.depth_frame_topdown_rgb)
             tag_qt   = self.camera._to_qimage(self.camera.tag_image_frame)
             workspace_qt = self.camera._to_qimage(self.camera.workspace_frame)
             heatmap_qt = self.camera._to_qimage(self.camera.heatmap)
