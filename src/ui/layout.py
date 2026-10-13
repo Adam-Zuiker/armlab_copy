@@ -121,19 +121,28 @@ def _row(*widgets, spacing=6):
     return h
 
 
+NUM_CUSTOM_BUTTONS = 8
+
+
 class Ui_MainWindow:
 
     def setupUi(self, MainWindow):
         MainWindow.setWindowTitle('Arm Lab')
-        MainWindow.resize(1260, 934)
-        MainWindow.setMinimumSize(1260, 820)
+        # 112 px taller than before the Custom Buttons row, so the right panel keeps its room.
+        MainWindow.resize(1260, 1046)
+        MainWindow.setMinimumSize(1260, 932)
 
         central = QWidget()
         MainWindow.setCentralWidget(central)
 
-        root = QHBoxLayout(central)
+        # Everything below sits in `root`, with the custom button row underneath.
+        outer = QVBoxLayout(central)
+        outer.setSpacing(12)
+        outer.setContentsMargins(14, 14, 14, 14)
+
+        root = QHBoxLayout()
         root.setSpacing(12)
-        root.setContentsMargins(14, 14, 14, 14)
+        outer.addLayout(root, stretch=1)
 
         # --- LEFT COLUMN ---
         video_col = QVBoxLayout()
@@ -530,6 +539,20 @@ class Ui_MainWindow:
         auto.addLayout(pick_row)
 
         rp.addStretch()
+
+        # --- BOTTOM ROW: custom buttons, full width ---
+        # control_station.py binds them to state machine states (CUSTOM_BUTTONS).
+        custom_frame, custom = _card('Custom Buttons', padding=(14, 14, 14, 14), spacing=6)
+        custom_row = QHBoxLayout()
+        custom_row.setSpacing(8)
+        custom.addLayout(custom_row)
+        self.custom_buttons = []
+        for i in range(NUM_CUSTOM_BUTTONS):
+            btn = _button(f'Custom {i + 1}', name=f'btn_custom_{i + 1}')
+            btn.setEnabled(False)
+            custom_row.addWidget(btn, stretch=1)
+            self.custom_buttons.append(btn)
+        outer.addWidget(custom_frame)
 
         # Widget groups - controller iterates these; keep in sync with the joint loop above
         self.joint_readouts     = [self.rdoutBaseJC,  self.rdoutShoulderJC, self.rdoutElbowJC,

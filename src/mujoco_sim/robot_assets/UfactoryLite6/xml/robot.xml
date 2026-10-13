@@ -28,16 +28,30 @@
       </default>
       <site size="0.001" rgba="0.5 0.5 0.5 0.3" group="4"/>
     </default>
+    <!-- Arm Lab parallel gripper. Its own class, so the bodies below link6 do not
+         inherit the arm's mesh geoms, armature and servo gains. -->
+    <default class="armlab_gripper">
+      <geom type="box" group="3" mass="0" density="0"/>
+      <joint type="slide" axis="1 0 0" range="0 0.025" damping="2" armature="0.01" frictionloss="0.05"/>
+      <default class="gripper_visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2" material="gripper_black"/>
+      </default>
+      <!-- Finger pad: the plate from inside the housing to the tip (48.4 to 96.4 mm),
+           inner face at x = -25 mm. priority makes its friction and condim win against
+           any block. -->
+      <default class="gripper_pad">
+        <geom size="0.005 0.022 0.024" pos="-0.03 0 0.0724" priority="1" condim="4"
+          friction="1.2 0.02 0.001" solref="0.004 1" solimp="0.95 0.99 0.001"/>
+      </default>
+    </default>
   </default>
 
   <asset>
     <material name="white" rgba="1 1 1 1"/>
     <material name="silver" rgba=".753 .753 .753 1"/>
 
-    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
-    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
-      markrgb="0.8 0.8 0.8" width="300" height="300"/>
-    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+    <material name="gripper_black" rgba=".16 .16 .17 1"/>
+    <material name="gripper_finger" rgba=".28 .3 .34 1"/>
 
     <mesh file="visual/link_base.stl"/>
     <mesh file="visual/link1.stl"/>
@@ -53,6 +67,9 @@
     <mesh name="link4_c" file="collision/link4.stl"/>
     <mesh name="link5_c" file="collision/link5.stl"/>
     <mesh name="link6_c" file="collision/link6.stl"/>
+    <!-- Built from the CAD export by build_gripper_meshes.py, kept with the CAD outside this repo (metres, gripper frame). -->
+    <mesh file="visual/armlab_gripper_base.stl"/>
+    <mesh file="visual/armlab_gripper_finger.stl"/>
   </asset>
 
   <visual>
@@ -64,9 +81,8 @@
   <statistic center="0 0 0.3" extent="0.8"/>
 
   <worldbody>
-    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
-    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
-
+    <!-- gravcomp="1" on every moving body: the real controller compensates gravity,
+         while these position servos alone would sag 1-4 mm at the grasp point. -->
     <body name="link_base" childclass="lite6">
       <inertial pos="-0.00829545 3.26357e-05 0.0631195" mass="1.65394" diaginertia="0 0 0"/>
       <geom class="visual" mesh="link_base"/>
@@ -76,37 +92,37 @@
       <geom name="base_frame_x" class="frame_axis" fromto="0 0 0  0.16 0 0" size="0.008" rgba="1 0 0 1"/>
       <geom name="base_frame_y" class="frame_axis" fromto="0 0 0  0 0.16 0" size="0.008" rgba="0 1 0 1"/>
       <geom name="base_frame_z" class="frame_axis" fromto="0 0 0  0 0 0.35" size="0.008" rgba="0 0 1 1"/>
-      <body name="link1" pos="0 0 0.2435">
+      <body name="link1" gravcomp="1" pos="0 0 0.2435">
         <inertial pos="-0.00036 0.04195 -0.0025" quat="0.608059 0.792349 -0.0438707 0.0228718" mass="1.411"
           diaginertia="0.00145276 0.00135275 0.000853355"/>
         <joint name="joint1" range="-6.28319 6.28319"/>
         <geom class="visual" mesh="link1"/>
         <geom name="link1_c" class="collision" mesh="link1_c"/>
-        <body name="link2" quat="-1 1 1 1">
+        <body name="link2" gravcomp="1" quat="-1 1 1 1">
           <inertial pos="0.179 0 0.0584" quat="0.417561 0.571619 0.569585 0.417693" mass="1.34"
             diaginertia="0.00560971 0.0052152 0.00122018"/>
           <joint name="joint2" range="-2.61799 2.61799"/>
           <geom class="visual" mesh="link2"/>
           <geom name="link2_c" class="collision" mesh="link2_c"/>
-          <body name="link3" pos="0.2002 0 0" quat="-2.59734e-06 -0.707105 -0.707108 -2.59735e-06">
+          <body name="link3" gravcomp="1" pos="0.2002 0 0" quat="-2.59734e-06 -0.707105 -0.707108 -2.59735e-06">
             <inertial pos="0.072 -0.0357 -0.001" quat="0.128259 0.662963 -0.167256 0.71837" mass="0.953"
               diaginertia="0.0018521 0.00175546 0.000703807"/>
             <joint name="joint3" range="-0.061087 5.23599"/>
             <geom class="visual" mesh="link3"/>
             <geom name="link3_c" class="collision" mesh="link3_c"/>
-            <body name="link4" pos="0.087 -0.22761 0" quat="0.707105 0.707108 0 0">
+            <body name="link4" gravcomp="1" pos="0.087 -0.22761 0" quat="0.707105 0.707108 0 0">
               <inertial pos="-0.002 -0.0285 -0.0813" quat="0.975248 0.22109 0.00203498 -0.00262178" mass="1.284"
                 diaginertia="0.00370503 0.00349091 0.00109586"/>
               <joint name="joint4" range="-6.28319 6.28319"/>
               <geom class="visual" mesh="link4"/>
               <geom name="link4_c" class="collision" mesh="link4_c"/>
-              <body name="link5" quat="1 1 0 0">
+              <body name="link5" gravcomp="1" quat="1 1 0 0">
                 <inertial pos="0 0.01 0.0019" quat="0.71423 0.696388 -0.0531933 0.0456997" mass="0.804"
                   diaginertia="0.000567553 0.000529266 0.000507681"/>
                 <joint name="joint5" range="-2.1642 2.1642"/>
                 <geom class="visual" mesh="link5"/>
                 <geom name="link5_c" class="collision" mesh="link5_c"/>
-                <body name="link6" pos="0 0.0625 0" quat="1 -1 0 0">
+                <body name="link6" gravcomp="1" pos="0 0.0625 0" quat="1 -1 0 0">
                   <inertial pos="0 -0.00194 -0.0102" quat="-0.0376023 0.704057 0.0446838 0.707738" mass="0.13"
                     diaginertia="0.000148148 8.57757e-05 7.71412e-05"/>
                   <joint name="joint6" range="-6.28319 6.28319"/>
@@ -118,6 +134,38 @@
                   <geom name="ee_frame_x" class="frame_axis" fromto="0 0 0  0.05 0 0" size="0.004" rgba="1 0 0 1"/>
                   <geom name="ee_frame_y" class="frame_axis" fromto="0 0 0  0 0.05 0" size="0.004" rgba="0 1 0 1"/>
                   <geom name="ee_frame_z" class="frame_axis" fromto="0 0 0  0 0 0.05" size="0.004" rgba="0 0 1 1"/>
+                  <!-- Arm Lab parallel gripper. Gripper frame: origin on the mounting face,
+                       +z along the approach, +x the left finger's closing direction. The quat
+                       turns the jaws to close along the flange y axis. Change it here if the
+                       real gripper is mounted the other way round. -->
+                  <body name="gripper_base" gravcomp="1" childclass="armlab_gripper" quat="0.7071068 0 0 0.7071068">
+                    <inertial pos="0 0 0.04" mass="0.2" diaginertia="1.8e-4 2.6e-4 2.6e-4"/>
+                    <geom class="gripper_visual" mesh="armlab_gripper_base"/>
+                    <!-- Collision boxes traced from the CAD: the housing is a top plate and two
+                         end plates, open in the middle. A block pushed up between the jaws rises
+                         to the top plate, 48 mm from the flange. The guide rods and the racks get
+                         no collision boxes: pressed into those thin boxes, a block went through
+                         and stayed caught after the jaws opened. -->
+                    <geom name="gripper_mount_c" size="0.0377 0.0377 0.0025" pos="0 0 0.0025"/>
+                    <geom name="gripper_column_c" size="0.033 0.0125 0.015" pos="0 0 0.02"/>
+                    <geom name="gripper_top_c" size="0.05 0.025 0.00675" pos="0 0 0.04165"/>
+                    <geom name="gripper_end_l_c" size="0.0025 0.025 0.0125" pos="-0.0475 0 0.0609"/>
+                    <geom name="gripper_end_r_c" size="0.0025 0.025 0.0125" pos="0.0475 0 0.0609"/>
+                    <!-- Finger joints: 0 = open (50 mm gap), 0.025 = closed (pads touching). -->
+                    <body name="gripper_left_finger" gravcomp="1">
+                      <inertial pos="-0.022 0 0.075" mass="0.015" diaginertia="5.3e-6 4.2e-6 2.6e-6"/>
+                      <joint name="gripper_left"/>
+                      <geom class="gripper_visual" mesh="armlab_gripper_finger" material="gripper_finger"/>
+                      <geom name="gripper_left_pad" class="gripper_pad"/>
+                    </body>
+                    <!-- The same finger turned 180 deg about z. -->
+                    <body name="gripper_right_finger" gravcomp="1" quat="0 0 0 1">
+                      <inertial pos="-0.022 0 0.075" mass="0.015" diaginertia="5.3e-6 4.2e-6 2.6e-6"/>
+                      <joint name="gripper_right"/>
+                      <geom class="gripper_visual" mesh="armlab_gripper_finger" material="gripper_finger"/>
+                      <geom name="gripper_right_pad" class="gripper_pad"/>
+                    </body>
+                  </body>
                 </body>
               </body>
             </body>
@@ -126,6 +174,26 @@
       </body>
     </body>
   </worldbody>
+
+  <!-- Both fingers are driven through one tendon and held together by a stiff
+       equality, so the jaws close symmetrically and the squeeze is not routed
+       through a soft constraint. -->
+  <tendon>
+    <fixed name="gripper_split">
+      <joint joint="gripper_left" coef="0.5"/>
+      <joint joint="gripper_right" coef="0.5"/>
+    </fixed>
+  </tendon>
+
+  <equality>
+    <joint joint1="gripper_left" joint2="gripper_right" solref="0.005 1" solimp="0.95 0.99 0.001"/>
+  </equality>
+
+  <!-- MuJoCo already ignores contacts between a body and its parent (gripper_base is
+       welded to link6, so that covers both). The two fingers are siblings: exclude them. -->
+  <contact>
+    <exclude body1="gripper_left_finger" body2="gripper_right_finger"/>
+  </contact>
 
   <!-- Position (servo) actuators, matching upstream mujoco_menagerie. ctrl is a joint
        angle target in radians, so ctrlrange doubles as joint-limit protection. -->
@@ -136,6 +204,10 @@
     <position name="joint4_motor" joint="joint4" class="size2" ctrlrange="-6.28319 6.28319"/>
     <position name="joint5_motor" joint="joint5" class="size2" ctrlrange="-2.1642 2.1642"/>
     <position name="joint6_motor" joint="joint6" class="size3" ctrlrange="-6.28319 6.28319"/>
+    <!-- Binary jaws on the real arm: the bridge ramps this target between open (0)
+         and closed (0.025 m). forcerange caps the squeeze, so closing on a block
+         stalls at about 15 N per finger like a servo against an object. -->
+    <position name="gripper_motor" tendon="gripper_split" kp="3000" kv="20" ctrlrange="0 0.025" forcerange="-30 30"/>
   </actuator>
 
   <sensor>
@@ -163,6 +235,9 @@
 
   <keyframe>
     <!-- <key name="home" qpos="0 0 1.57 0 1.57 0" ctrl="0 0 0 0 0 0"/> -->
-    <key name="home" qpos="0 0 0 0 0 0" ctrl="0 0 0 0 0 0"/>
+    <!-- No qpos: a keyframe fills the joints it does not list with zeros, which would
+         put every block of armlab_scene.xml at the origin, inside the arm base. Left
+         out, qpos is qpos0: the arm at zero and each block where its body is defined. -->
+    <key name="home"/>
   </keyframe>
 </mujoco>

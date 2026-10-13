@@ -11,7 +11,8 @@ class Config:
     asset_root = package_root / "robot_assets"
 
     robot_path_dict = {
-        "ufactory_lite6":   "UfactoryLite6/xml/robot.xml",
+        # The Arm Lab scene: robot.xml (arm + gripper + sensors) plus board and blocks.
+        "ufactory_lite6":   "UfactoryLite6/xml/armlab_scene.xml",
     }
     valid_robot_types = list(robot_path_dict.keys())
 
@@ -33,6 +34,9 @@ class Config:
         self.robot_state_topic = self.robot_type + "_state"
         self.robot_cmd_topic = self.robot_type + "_control"
         self.robot_display_topic = self.robot_type + "_display"
+        self.robot_gripper_topic = self.robot_type + "_gripper"
+        self.world_topic = self.robot_type + "_world"
+        self.reset_topic = self.robot_type + "_reset"
 
         self.robot_xml_path = str(self.asset_root / self.robot_path_dict[self.robot_type])
 

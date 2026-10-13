@@ -11,7 +11,10 @@ import time
 
 import cv2
 import numpy as np
-import pyrealsense2 as rs
+try:
+    import pyrealsense2 as rs
+except ImportError:  # no RealSense wheel for macOS: the GUI then runs without video
+    rs = None
 from pupil_apriltags import Detector
 from PyQt5.QtCore import QThread, pyqtSignal
 from PyQt5.QtGui import QImage
@@ -63,7 +66,7 @@ class Camera:
         self._pipeline_running = False
         self.camera_connected = False
 
-        if len(rs.context().query_devices()) == 0:
+        if rs is None or len(rs.context().query_devices()) == 0:
             print("WARNING: No RealSense device found - running without video.")
             return
 

@@ -1,0 +1,12 @@
+package lcm_msgs;
+
+struct ufactory_lite6_gripper_t
+{
+    int64_t  timestamp;
+
+    // Binary jaw command, mirroring the real arm's open/close/stop_lite6_gripper.
+    // The upper level re-streams the latest command. The bridge holds it with no
+    // watchdog, since the real gripper also keeps its last state.
+    const int8_t STOP = 0, OPEN = 1, CLOSE = 2;
+    int8_t   command;
+}

@@ -1,0 +1,26 @@
+package lcm_msgs;
+
+// Sim-only ground truth, published by the bridge at a reduced rate. Flat parallel
+// arrays, because nested LCM types import a top-level lcm_msgs package that does
+// not exist here.
+struct sim_world_t
+{
+    int64_t  timestamp;
+
+    // Arm trajectory status (position mode): motion_done is true once the
+    // bridge's desired trajectory has reached its target and stopped. stopped is
+    // the stop latch (control mode 3 until mode 4), shared by every client.
+    const int32_t num_joint = 6;
+    boolean  stopped;
+    boolean  motion_done;
+    double   q_des[num_joint];   // rad
+
+    // The blocks a camera looking straight down sees: on the board, with no other
+    // block above their centre. Edge and centre in m, yaw in rad wrapped to
+    // [-pi/4, pi/4) since a cube looks the same every 90 deg.
+    int32_t  num_blocks;
+    string   color[num_blocks];
+    double   size[num_blocks];
+    double   pos[num_blocks][3];
+    double   yaw[num_blocks];
+}

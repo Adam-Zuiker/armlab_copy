@@ -9,7 +9,9 @@ struct ufactory_lite6_control_t
     // Control mode: 
     //  0 = position/servo (target = qj_pos),
     //  1 = joint velocity/jog (target = qj_vel),
-    //  2 = Cartesian velocity/jog (target = v_ee)
+    //  2 = Cartesian velocity/jog (target = v_ee),
+    //  3 = stop: hold where the arm is and ignore modes 0-2 until a resume,
+    //  4 = resume after a stop and hold qj_pos (the real arm's stop state and set_state(0))
     int8_t   mode;
 
     // Trajectory shaping limits. Scalars.
