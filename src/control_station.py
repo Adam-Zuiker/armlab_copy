@@ -188,7 +188,7 @@ class Gui(QMainWindow):
         if xy is None:
             return x, y
 
-        print(f'XY: {xy}')
+        # print(f'XY: {xy}')
 
         h, w = self.camera.depth_frame_raw.shape
         return (

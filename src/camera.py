@@ -23,6 +23,7 @@ COLOR_W, COLOR_H = 1280, 720
 DEPTH_W, DEPTH_H = 1024, 768
 TAG_SIZE_MM = 25.0
 WORKSPACE_MARGIN_MM = 50.0
+MM_PER_PX = 600 / 570
 # Known workspace tag centers in millimeters in the robot/world frame.
 # Students can adjust these for their physical station.
 # TODO: student lab - adjust thest to match new workspace tag locations.
@@ -32,6 +33,13 @@ TAG_WORLD_POINTS = {
     3: (400.0, -300.0, 0.0),
     4: (400.0, 300.0, 0.0),
 }
+
+TABLE_EDGE_POINTS = [
+    [-100, 500, 0],
+    [-100, -500, 0],
+    [500, -500, 0],
+    [500, 500, 0],
+]
 # TODO: fill in from the fixture spec for your station.
 FIXTURE_OFFSET_MM = np.array([0, 0, 60], dtype=float)
 CHECK_3D_TARGETS_MM = np.array([
@@ -51,6 +59,16 @@ CHECK_3D_TARGETS_MM = np.array([
 CHECK_3D_CSV = (Path(__file__).resolve().parent.parent / "results" / "check_3d_results.csv")
 FIXTURE_TAG_ID = 5
 
+COLOR_HUE_RANGES = [
+    ("red", 0, 9),
+    ("orange", 10, 18),
+    ("yellow", 19, 50),
+    ("green", 51, 85),
+    ("blue", 86, 125),
+    ("purple", 126, 165),
+    ("red", 166, 179),
+]
+
 class Camera:
     """Holds live frame data and owns the RealSense pipeline."""
 
@@ -58,6 +76,7 @@ class Camera:
         self.video_frame = np.zeros((COLOR_H, COLOR_W, 3), dtype=np.uint8)
         self.depth_frame_raw = np.zeros((COLOR_H, COLOR_W), dtype=np.uint16)
         self.depth_frame_rgb = np.zeros((COLOR_H, COLOR_W, 3), dtype=np.uint8)
+        self.depth_frame_topdown_rgb = np.zeros((COLOR_H, COLOR_W, 3), dtype=np.uint8)
         self.tag_image_frame = np.zeros((COLOR_H, COLOR_W, 3), dtype=np.uint8)
         self.workspace_frame = np.zeros((COLOR_H, COLOR_W, 3), dtype=np.uint8)
         self.heatmap = np.zeros((COLOR_H, COLOR_W, 3), dtype=np.uint8)
@@ -87,6 +106,7 @@ class Camera:
         self.camera_connected = False
         self.check_3d_records = []
         self.board_check_requested = False
+        self.block_contours = []
 
         if len(rs.context().query_devices()) == 0:
             print("WARNING: No RealSense device found - running without video.")
@@ -171,6 +191,7 @@ class Camera:
         colorized[~in_range] = 0
 
         self.depth_frame_rgb = colorized
+        self.depth_frame_topdown_rgb = self.depth_frame_rgb
 
     # 2.8a
     def draw_gridlines_in_rgb_image(self):
@@ -438,6 +459,8 @@ class Camera:
         self.board_tag_centers_px = centers
         self.camera_calibrated = True
 
+        self.compute_plane_and_table_depth_raw()
+
 
         # breakpoint()
 
@@ -636,9 +659,17 @@ class Camera:
     
             self.depth_frame_topdown_rgb = colorized
     
-
-    def flatten_depth_topdown(self):
-
+    def compute_plane_and_table_depth_raw(self):
+        self.depth_frame_topdown_raw = self.depth_frame_raw.copy()
+        if self.workspace_homography is not None:
+            height, width = self.depth_frame_topdown_raw.shape[:2]
+            self.depth_frame_topdown_raw = cv2.warpPerspective(
+                self.depth_frame_topdown_raw,
+                self.workspace_homography,
+                (width, height),
+                flags=cv2.INTER_NEAREST
+            )
+        
         TABLE_SAMPLE_PIXEL = np.array([
             [380, 475],  # tag 1
             [950, 475],  # tag 2
@@ -661,13 +692,25 @@ class Camera:
 
         H, W = self.depth_frame_topdown_raw.shape
         U, V = np.meshgrid(np.arange(W), np.arange(H))
-        plane = a * U + b * V + c
+        self.plane = a * U + b * V + c
 
         # self.height = np.where(self.depth_frame_topdown_raw > 0, plane - self.depth_frame_topdown_raw, 0.0).astype(np.float32)
         self.table_depth_raw = np.mean(sample_depths)
-        self.depth_frame_topdown_raw = np.where(self.depth_frame_topdown_raw > 0, self.depth_frame_topdown_raw - plane + self.table_depth_raw, 0.0)
+
+    def flatten_depth_topdown(self):
+        self.depth_frame_topdown_raw = np.where(self.depth_frame_topdown_raw > 0, self.depth_frame_topdown_raw - self.plane + self.table_depth_raw, 0.0)
         self.colorize_depth_frame_topdown()
 
+    def worldpoint_to_pixel(self, worldpoint):
+        worldpoint = np.array([worldpoint[0], worldpoint[1], worldpoint[2], 1])
+        camerapoint = self.extrinsic_matrix_inv @ worldpoint
+        projection_matrix = np.array([
+            [1,0,0,0],
+            [0,1,0,0],
+            [0,0,1,0],
+        ])
+        pixel = 1 / camerapoint[2] * self.intrinsic_matrix @ projection_matrix @ camerapoint
+        return pixel[:2].astype(int)
 
     def find_contours(self, h_lo_mm, h_hi_mm):
 
@@ -675,13 +718,121 @@ class Camera:
 
         mask = ((height_mm > h_lo_mm) & (height_mm < h_hi_mm)).astype(np.uint8) * 255
 
+        
+
+        # here we exclude the noises outside the desk
+        # bottom left
+        bl_point = TABLE_EDGE_POINTS[0]
+        bl_pixel = self.worldpoint_to_pixel(bl_point)
+
+        # bottom right
+        br_point = TABLE_EDGE_POINTS[1]
+        br_pixel = self.worldpoint_to_pixel(br_point)
+
+        # top right
+        tr_point = TABLE_EDGE_POINTS[2]
+        tr_pixel = self.worldpoint_to_pixel(tr_point)
+
+        # top left
+        tl_point = TABLE_EDGE_POINTS[3]
+        tl_pixel = self.worldpoint_to_pixel(tl_point)
+
+        roi = np.zeros_like(mask)
+        roi[tl_pixel[1] + 50: bl_pixel[1] - 50, tl_pixel[0] + 100:tr_pixel[0] - 100] = 255
+
+        # print(tl_pixel[0], tr_pixel[0], tl_pixel[1], bl_pixel[1])
+        mask = cv2.bitwise_and(mask, roi)
+
         kernel = np.ones((5, 5), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
 
-        self.block_contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        cv2.drawContours(self.workspace_frame, self.block_contours, -1, (0, 255, 0), 2)
-        
+        curr_block_contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        self.block_contours.extend(curr_block_contours)
+        cv2.drawContours(self.workspace_frame, curr_block_contours, -1, (0, 255, 0), 1)
+
+
+    def find_blocks(self):
+        self.block_detections = []
+        for contour in self.block_contours:
+
+            (cx, cy), (w, h), angle = cv2.minAreaRect(contour)
+            w_mm, h_mm = w * MM_PER_PX, h * MM_PER_PX
+
+            if w_mm * h_mm < 300 or w_mm * h_mm > 2700:
+                continue
+
+            if max(w_mm, h_mm) / max(min(w_mm, h_mm), 1e-6) > 1.3:
+                continue
+
+            side = (w_mm + h_mm) / 2
+
+            size = "big" if side > 31 else "small"
+
+            angle_deg = angle % 90
+
+            color = self.classify_color(contour)
+
+            p_world = self.block_world_position(cx, cy)
+
+            self.block_detections.append({
+                "contour": contour,
+                "center_td": (cx, cy),
+                "side_mm": side,
+                "size": size,
+                "angle_degree": angle_deg,
+                "color": color,
+                "world": p_world
+            })
+
+            box = cv2.boxPoints(((cx, cy), (w, h), angle)).astype(np.int32)
+            cv2.drawContours(self.workspace_frame, [box], 0, (255, 0, 0), 2)
+            lines = [f"{color} {size} {angle_deg}",
+                     f"{p_world[0]:.0f} {p_world[1]:.0f} {p_world[2]:.0f}"]
+            for i, line in enumerate(lines):
+                cv2.putText(self.workspace_frame, line, (int(cx), int(cy) + i * 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)  
+
+    # taught by AI
+    def hsv_to_color(self, h, s, v):
+        # if s < 60 or v < 40:
+        #     print("s < 60 or v < 40 detected")
+        #     return "unknown"
+        for name, lo, hi in COLOR_HUE_RANGES:
+            if lo <= h <= hi:
+                return name
+        return "unknown"
+    
+    def classify_color(self, contour):
+        mask = np.zeros(self.workspace_frame.shape[:2], np.uint8)
+        cv2.drawContours(mask, [contour], -1, 255, thickness=cv2.FILLED)
+
+        mask = cv2.erode(mask, np.ones((5, 5)))
+
+        # ai generated
+
+        hsv = cv2.cvtColor(self.video_frame, cv2.COLOR_RGB2HSV)
+        h, s, v = [int(np.median(ch[mask>0])) for ch in cv2.split(hsv)]
+
+        return self.hsv_to_color(h, s, v)
+
+
+    def block_world_position(self, cx, cy):
+        uv = self.workspace_pixel_to_image(cx, cy)
+        u, v = int(uv[0]), int(uv[1])
+
+        depth = self.depth_frame_raw[v][u]
+
+        Zc = depth * self.depth_scale_mm
+        Xc = (u - self.intrinsic_matrix[0, 2]) * Zc / self.intrinsic_matrix[0, 0]
+        Yc = (v - self.intrinsic_matrix[1, 2]) * Zc / self.intrinsic_matrix[1, 1]
+
+        p_world = self.camera_to_world(np.array([Xc, Yc, Zc]))
+
+        return p_world[:3]
+
+
+
+                
         
 
 
@@ -743,8 +894,14 @@ class VideoThread(QThread):
             self.camera.draw_gridlines_in_rgb_image()
             # self.camera.check_board_plane()
 
-            self.camera.warp_depth_image()
-            self.camera.find_contours()
+            if self.camera.camera_calibrated:
+                self.camera.warp_depth_image()
+                self.camera.find_contours(15, 57)
+                self.camera.find_contours(58, 95)
+                self.camera.find_contours(96, 133)
+                self.camera.find_contours(134, 171)
+                self.camera.find_contours(172, 209)
+                self.camera.find_blocks()
             
 
             if self.camera.board_check_requested:
@@ -764,6 +921,8 @@ class VideoThread(QThread):
 
             elapsed = time.time() - start
             time.sleep(max(0.0, 1 / 30 - elapsed))
+
+            self.camera.block_contours.clear()
 
 
 if __name__ == '__main__':
