@@ -1,0 +1,36 @@
+Detector evaluation: /home/rob-550-am/armlab-f-26-s-011-g-7/results/detector_eval/20261013_222956
+Blocks: 8, frames: 30, block-frames: 240, matched: 240, match radius 40 mm
+
+== 1. Position (detected - true, XY) ==
+XY error  mean 6.0 mm, median 6.9, RMS 6.4, max 8.9
+Mean bias (systematic offset)  dx -5.6 mm, dy +1.4 mm
+Error vs distance from board center (per position, mean over frames):
+   100- 150 mm: mean   5.5 mm, max   7.8 mm (4 positions)
+   200- 250 mm: mean   6.4 mm, max   8.4 mm (4 positions)
+Top-face Z of big blocks: mean 18.9 mm, std 4.1 mm (should be ~ the block height)
+
+== 2. Color confusion (rows = true, columns = detected; counts are block-frames) ==
+[lighting: normal] accuracy on found blocks: 232/240 = 96.7%
+            red  orange  yellow   green    blue  purple unknown  missed
+    red      60       0       0       0       0       0       0       0
+ orange       0      30       0       0       0       0       0       0
+ yellow       0       0      30       0       0       0       0       0
+  green       0       0       0      30       0       0       0       0
+   blue       0       0       0       0      60       0       0       0
+ purple       0       0       0       0       8      22       0       0
+Most confused: true purple -> detected blue (8 block-frames)
+
+== 3. Size and orientation ==
+Size big  : 180/180 correct (100.0%), measured side 43.4 +/- 0.6 mm
+Size small: 60/60 correct (100.0%), measured side 26.8 +/- 0.6 mm
+Angle error (mod 90): mean |err| 4.2 deg, max 30.0 deg, bias +3.4 deg
+  true   0.0 deg: detected mean   0.6 deg, |err|  0.6 deg (120 frames)
+  true  15.0 deg: detected mean  12.0 deg, |err|  3.2 deg (30 frames)
+  true  30.0 deg: detected mean  31.7 deg, |err|  1.7 deg (30 frames)
+  true  45.0 deg: detected mean  45.3 deg, |err|  0.3 deg (30 frames)
+  true  60.0 deg: detected mean  86.7 deg, |err| 26.0 deg (30 frames)
+
+== 4. Detection rate ==
+Found 240/240 block-frames = 100.0%
+  Every block was found in every frame.
+False positives: 0 over 30 frames (0.00 per frame)

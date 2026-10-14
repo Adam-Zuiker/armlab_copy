@@ -64,8 +64,8 @@ COLOR_HUE_RANGES = [
     ("orange", 10, 18),
     ("yellow", 19, 50),
     ("green", 51, 85),
-    ("blue", 86, 125),
-    ("purple", 126, 165),
+    ("blue", 86, 140),
+    ("purple", 141, 165),
     ("red", 166, 179),
 ]
 
