@@ -98,16 +98,18 @@ class Lite6Arm:
 
     # --- Motion ---
 
-    def set_joint_angles(self, joint_angles_rad):
-        # Send all 6 joint angles (rad) as a non-blocking move.
+    def set_joint_angles(self, joint_angles_rad, wait=False):
+        # Send all 6 joint angles (rad). The controller queues moves and runs them in
+        # order, and wait=True blocks until this one is done. Returns True on success (SDK code 0).
         if not self.connected or not self.initialized:
-            return
-        self.xarm.set_servo_angle(
+            return False
+        code = self.xarm.set_servo_angle(
             angle=joint_angles_rad,
             speed=self.speed_pct / 100.0 * np.pi,
             mvacc=self.mvacc_rad_s2,
-            wait=False,
+            wait=wait,
         )
+        return code == 0
 
     def enter_jog_mode(self):
         # Switch to velocity control once when direct control is enabled.

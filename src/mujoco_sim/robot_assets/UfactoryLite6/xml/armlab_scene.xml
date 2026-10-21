@@ -1,0 +1,104 @@
+<mujoco model="armlab scene">
+  <!-- The Arm Lab station: the arm with its gripper (robot.xml), the board and the
+       blocks. This is the file the sim loads (lite6_sim/config.py).
+
+       World frame = arm base frame: origin at the centre of the arm mount, z up,
+       board surface at z = 0, x forward, y to the arm's left. The board (100 x 60 cm,
+       arm base 10 cm from one long edge) covers x in [-100, 500] mm, y in [-500, 500] mm,
+       with 50 mm grid lines through the origin.
+
+       Blocks are free bodies named block_<size>_<color>. They start parked on the
+       floor beside the board, and each event's layout is a keyframe at the end of
+       this file. Their geoms are the only moving ones in group 0: the ghost arm,
+       which draws group 2 only, never shows copies of them, and the bridge finds
+       what a camera looking down sees by casting rays at group 0 alone. -->
+  <include file="robot.xml"/>
+
+  <!-- Elliptic cones with a high impratio keep grasped blocks from creeping. -->
+  <option cone="elliptic" impratio="10"/>
+
+  <statistic center="0.2 0 0.15" extent="0.9"/>
+
+  <default>
+    <default class="block">
+      <geom type="box" group="0" density="600" friction="0.5 0.005 0.0001" solref="0.004 1"/>
+      <default class="block_large">
+        <geom size="0.019 0.019 0.019"/>
+      </default>
+      <default class="block_small">
+        <geom size="0.0125 0.0125 0.0125"/>
+      </default>
+    </default>
+  </default>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
+      markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+    <!-- Board grid: a plane maps one texture tile onto 2 / texrepeat metres, so
+         texrepeat 40 gives 50 mm cells. The cross mark runs through the middle of each
+         tile, which puts the grid lines through the world origin. -->
+    <texture type="2d" name="board_grid" builtin="checker" mark="cross" rgb1="0.82 0.82 0.79" rgb2="0.82 0.82 0.79"
+      markrgb="0.3 0.3 0.3" width="64" height="64"/>
+    <material name="board_grid" texture="board_grid" texuniform="true" texrepeat="40 40"/>
+    <material name="board_edge" rgba="0.82 0.82 0.79 1"/>
+
+    <material name="block_red" rgba="0.85 0.12 0.12 1"/>
+    <material name="block_orange" rgba="0.98 0.5 0.05 1"/>
+    <material name="block_yellow" rgba="0.95 0.85 0.1 1"/>
+    <material name="block_green" rgba="0.1 0.62 0.22 1"/>
+    <material name="block_blue" rgba="0.1 0.3 0.85 1"/>
+    <material name="block_violet" rgba="0.55 0.22 0.75 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" pos="0 0 -0.02"/>
+    <!-- The box is the board blocks rest on. The plane on top only draws the grid
+         (a plane collides as an infinite half-space, so it gets no contacts). -->
+    <geom name="board" type="box" size="0.3 0.5 0.01" pos="0.2 0 -0.01" material="board_edge"
+      friction="0.5 0.005 0.0001"/>
+    <geom name="board_grid" type="plane" size="0.3 0.5 0.01" pos="0.2 0 0.0002" material="board_grid"
+      contype="0" conaffinity="0"/>
+
+    <!-- Parking spots: on the floor, more than 0.6 m from the base, out of reach. -->
+    <body name="block_large_red" pos="-0.10 0.70 -0.001"><freejoint name="block_large_red"/><geom class="block_large" material="block_red"/></body>
+    <body name="block_large_orange" pos="0.00 0.70 -0.001"><freejoint name="block_large_orange"/><geom class="block_large" material="block_orange"/></body>
+    <body name="block_large_yellow" pos="0.10 0.70 -0.001"><freejoint name="block_large_yellow"/><geom class="block_large" material="block_yellow"/></body>
+    <body name="block_large_green" pos="0.20 0.70 -0.001"><freejoint name="block_large_green"/><geom class="block_large" material="block_green"/></body>
+    <body name="block_large_blue" pos="0.30 0.70 -0.001"><freejoint name="block_large_blue"/><geom class="block_large" material="block_blue"/></body>
+    <body name="block_large_violet" pos="0.40 0.70 -0.001"><freejoint name="block_large_violet"/><geom class="block_large" material="block_violet"/></body>
+    <body name="block_small_red" pos="-0.10 0.80 -0.0075"><freejoint name="block_small_red"/><geom class="block_small" material="block_red"/></body>
+    <body name="block_small_orange" pos="0.00 0.80 -0.0075"><freejoint name="block_small_orange"/><geom class="block_small" material="block_orange"/></body>
+    <body name="block_small_yellow" pos="0.10 0.80 -0.0075"><freejoint name="block_small_yellow"/><geom class="block_small" material="block_yellow"/></body>
+    <body name="block_small_green" pos="0.20 0.80 -0.0075"><freejoint name="block_small_green"/><geom class="block_small" material="block_green"/></body>
+    <body name="block_small_blue" pos="0.30 0.80 -0.0075"><freejoint name="block_small_blue"/><geom class="block_small" material="block_blue"/></body>
+    <body name="block_small_violet" pos="0.40 0.80 -0.0075"><freejoint name="block_small_violet"/><geom class="block_small" material="block_violet"/></body>
+  </worldbody>
+
+  <!-- Event layouts, loaded by Reset Board (Sim) through sim_reset_t. A key must list
+       all of qpos: one that lists fewer fills the rest with zeros, not with the
+       parking spots above. Order: the 6 arm joints and 2 fingers (the reset leaves
+       the arm alone), then x y z qw qx qy qz of each block, large red, orange,
+       yellow, green, blue, violet, then the small ones in the same order. -->
+  <keyframe>
+    <!-- Event 0: all twelve blocks lie flat in front of the arm (x > 0), at fixed but
+         irregular positions and yaws, at least 106 mm apart and within 390 mm of the base. -->
+    <key name="event0" qpos="
+      0 0 0 0 0 0  0 0
+      0.15 -0.23 0.019 0.9848 0 0 0.1736
+      0.24 0.13 0.019 0.9914 0 0 0.1305
+      0.16 0.06 0.019 0.9962 0 0 0.0872
+      0.36 -0.09 0.019 0.9763 0 0 -0.2164
+      0.35 0.17 0.019 0.9962 0 0 -0.0872
+      0.25 -0.15 0.019 0.9659 0 0 0.2588
+      0.27 -0.01 0.0125 0.9397 0 0 -0.342
+      0.13 -0.09 0.0125 0.9537 0 0 -0.3007
+      0.27 0.27 0.0125 1 0 0 0
+      0.14 0.2 0.0125 0.9397 0 0 0.342
+      0.26 -0.29 0.0125 0.9914 0 0 -0.1305
+      0.35 0.06 0.0125 0.9537 0 0 0.3007
+    "/>
+  </keyframe>
+</mujoco>

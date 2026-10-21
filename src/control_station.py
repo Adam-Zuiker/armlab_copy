@@ -9,12 +9,22 @@ from PyQt5.QtCore import QEvent, QTimer, Qt, pyqtSlot
 from PyQt5.QtGui import QImage, QKeySequence, QPixmap
 from PyQt5.QtWidgets import QApplication, QMainWindow, QShortcut, QWidget
 
+import competition
 from camera import Camera, VideoThread
+from camera_sim import SimCamera, reset_board_event0
 from lite6arm import ArmThread, Lite6Arm, JOINT_NAMES
 from lite6arm_sim import SimArm, SimArmThread
 from state_machine import StateMachine, StateMachineThread
 from ui.layout import Ui_MainWindow
 from ui.style import STYLE
+
+# Custom buttons along the bottom of the window: (label, function). A click has the
+# state machine run function(arm, camera) in its thread. Add yours here. Buttons
+# past the end of this list stay disabled.
+CUSTOM_BUTTONS = [
+    ("Reset Board (Sim)", reset_board_event0),
+    ("Event 0", competition.event_0),
+]
 
 
 class Gui(QMainWindow):
@@ -27,7 +37,10 @@ class Gui(QMainWindow):
 
         # --- Hardware ---
         self.arm_mode = arm_mode  # "sim": MuJoCo sim over LCM; "real": arm hardware
-        self.camera = Camera()
+        if arm_mode == "sim":
+            self.camera = SimCamera()  # no video, detect_blocks() reads the sim's block poses
+        else:
+            self.camera = Camera()
         self.arm    = SimArm() if arm_mode == "sim" else Lite6Arm()
         self.sm     = StateMachine(self.arm, self.camera)
 
@@ -58,6 +71,10 @@ class Gui(QMainWindow):
         self.ui.btn_add_wp.clicked.connect(partial(self.sm.set_next_state, "add_waypoint"))
         self.ui.btn_clear_wps.clicked.connect(partial(self.sm.set_next_state, "clear_waypoints"))
         self.ui.btn_playback_wps.clicked.connect(partial(self.sm.set_next_state, "playback_waypoints"))
+        for btn, (label, function) in zip(self.ui.custom_buttons, CUSTOM_BUTTONS):
+            btn.setText(label)
+            btn.setEnabled(True)
+            btn.clicked.connect(partial(self._custom_button, label, function))
         # 2.8c: record one fixture measurement at the current pose
         QShortcut(QKeySequence("Ctrl+R"), self, activated=partial(self.sm.set_next_state, "check_3d"))
         # 2.8b: save one empty-board height check
@@ -401,6 +418,7 @@ class Gui(QMainWindow):
             # self.ui.btn_playback_wps,
             self.ui.btn_calibrate,
             self.ui.chk_pick_place,
+            *self.ui.custom_buttons,
         ]
         if locked:
             self._pre_manual_widget_states = {w: w.isEnabled() for w in widgets}
@@ -483,6 +501,15 @@ class Gui(QMainWindow):
         """Leave direct control and request the arm sleep pose."""
         self.ui.chk_directcontrol.setChecked(False)
         self.sm.set_next_state("sleep_arm")
+
+    def _custom_button(self, label, function):
+        """Leave the other arm modes and have the state machine run a custom button's function."""
+        self.ui.chk_directcontrol.setChecked(False)
+        self.ui.chk_pick_place.setChecked(False)
+        # Shown now: the function blocks the state machine thread until it is done.
+        self._set_status_message(f"{label}...")
+        self.sm.custom_button = (label, function)
+        self.sm.set_next_state("custom_button")
 
     # --- IK panel ---
 

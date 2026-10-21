@@ -2,6 +2,7 @@
 State machine for the arm lab runtime shell.
 """
 import time
+import traceback
 
 from PyQt5.QtCore import QThread, pyqtSignal
 # import lite6arm
@@ -15,6 +16,7 @@ class StateMachine:
         self.status_message = "Idle - waiting for input."
         self.current_state = "idle"
         self.next_state = "idle"
+        self.custom_button = None   # (label, function) of the custom button clicked last
 
         self._handlers = {
             "initial_pose":      self.initial_pose,
@@ -26,6 +28,7 @@ class StateMachine:
             "playback_waypoints":self.playback_waypoints,
             "direct_control":    self.direct_control,
             "pick_place":        self.pick_place,
+            "custom_button":     self.run_custom_button,
             "check_3d":          self.check_3d,
         }
 
@@ -142,6 +145,27 @@ class StateMachine:
         if self.current_state != "pick_place":
             self.status_message = "Pick & Place - click an object in the video feed."
             self.current_state = "pick_place"
+
+    def run_custom_button(self):
+        # Run the clicked custom button's function(arm, camera) to the end in this
+        # thread (CUSTOM_BUTTONS in control_station.py). STOP stops the arm, so the
+        # function's arm calls fail and it returns early.
+        label, function = self.custom_button
+        if not self.arm.connected or not self.arm.initialized:
+            self._go_idle(f"{label}: initialize the arm first.")
+            return
+        self.current_state = self.next_state
+        try:
+            function(self.arm, self.camera)
+            message = f"{label} finished."
+        except Exception as exc:
+            traceback.print_exc()
+            message = f"{label} failed: {exc}"
+        if self.next_state == self.current_state:
+            self._go_idle(message)
+        else:
+            self.status_message = message  # STOP asked for another state meanwhile: let it run
+
 
     def check_3d(self):
         _, self.status_message = self.camera.check_3d_point(self.arm.get_ee_pose_sdk())

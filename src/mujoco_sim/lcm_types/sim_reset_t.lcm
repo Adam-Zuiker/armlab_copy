@@ -1,0 +1,9 @@
+package lcm_msgs;
+
+// Put every block where the keyframe of this name (armlab_scene.xml) places it,
+// at rest. The arm is left alone.
+struct sim_reset_t
+{
+    int64_t  timestamp;
+    string   keyframe;
+}

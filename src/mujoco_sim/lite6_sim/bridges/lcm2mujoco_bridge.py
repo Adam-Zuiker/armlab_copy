@@ -25,7 +25,7 @@ class Lcm2MujocoBridge:
         self.topic_cmd = config.robot_cmd_topic
         self.config = config
 
-        self.num_motor = self.mj_model.nu
+        self.num_motor = self.num_joint_motors()
         self.num_body_state = self.mj_model.nq - self.num_motor
         self.num_joint_state = self.num_motor
         self.dim_motor_sensor = MOTOR_SENSOR_NUM * self.num_motor
@@ -109,6 +109,12 @@ class Lcm2MujocoBridge:
         # Bridges that support them flip these on; main.py skips the overlay when False.
         self.vis_ghost = False
         self.vis_fk = False
+
+    def num_joint_motors(self):
+        # Actuators behind the joints in the low state, one pos/vel/torque sensor
+        # triple each at the front of sensordata. Robots with extra actuators
+        # (e.g. a gripper) override this.
+        return self.mj_model.nu
 
     def _init_delay_buffer(self, source, delay_steps):
         length = max(delay_steps + 1, 1)

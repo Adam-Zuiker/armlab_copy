@@ -105,7 +105,9 @@ def main():
     # Enable visualization flags
     # viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_INERTIA] = True
     # viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_BODYBVH] = True
-    viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = True
+    # Contact-force arrows are off: with blocks on the board they bury the
+    # scene. Toggle them in the viewer when needed.
+    viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = False
 
     # Initialize bridge
     try:
@@ -212,7 +214,7 @@ def main():
         # Ghost arm. mjv_addGeoms appends starting at scn.ngeom and advances it,
         # so this has to run after ngeom is set above.
         if bridge.vis_ghost:
-            ghost_data.qpos[:6] = bridge.vis_ghost_q
+            ghost_data.qpos[getattr(bridge, "arm_qpos_adr", slice(0, 6))] = bridge.vis_ghost_q
             mujoco.mj_kinematics(mj_model, ghost_data)
             ghost_start = viewer.user_scn.ngeom
             mujoco.mjv_addGeoms(
