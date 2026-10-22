@@ -37,7 +37,7 @@ HOVER_Z = 3 * BLOCK_H["big"] + BLOCK_H["big"] / 2 + 25.0
 # What makes a detection a cube rather than a distractor.
 SIDE_TOL_MM = 7.0      # top face no smaller than a cube's edge length less this,
 MERGE_TOL_MM = 10.0    # and no bigger than it plus this: an off-center cube underneath can merge into the outline
-MIN_FILL = 0.85        # contour area / its min-area rectangle: square ~1, circle 0.79, triangle 0.5
+MIN_FILL = 0.70        # contour area / its min-area rectangle: square ~1, circle 0.79, triangle 0.5
 HEIGHT_TOL_MM = 15.0   # it stands this close to the board or the top of a two-cube stack, or between
 
 # Jaw clearance when picking: a cube can be gripped from two directions 90 deg apart,
