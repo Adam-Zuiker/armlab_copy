@@ -16,6 +16,23 @@ import numpy as np
 LARGE_MM = 38.0   # cube edge lengths
 SMALL_MM = 25.0
 
+# Heights a cube can stand on: the board, or a stack of up to two cubes (stacks are at most three high).
+STACK_HEIGHTS_MM = sorted({a + b for a in (0.0, SMALL_MM, LARGE_MM) for b in (0.0, SMALL_MM, LARGE_MM)})
+STACK_TOL_MM = 6.0
+
+
+def stack_error(z_bottom):
+    """Distance (mm) from z_bottom to the nearest height a cube can stand on."""
+    return min(abs(z_bottom - h) for h in STACK_HEIGHTS_MM)
+
+
+def size_from_height(z_top):
+    """'big' or 'small' when only that cube size can have its top face at z_top (mm), else None.
+    E.g. a top at 50 mm is a small cube on a small cube: no stack puts a large cube's top there."""
+    fits = [size for size, edge in (("big", LARGE_MM), ("small", SMALL_MM))
+            if stack_error(z_top - edge) < STACK_TOL_MM]
+    return fits[0] if len(fits) == 1 else None
+
 
 def wrap_yaw(yaw):
     """Wrap a cube's yaw to [-pi/4, pi/4): a cube looks the same every 90 deg."""

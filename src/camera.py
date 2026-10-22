@@ -12,6 +12,8 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+
+from blocks import size_from_height
 try:
     import pyrealsense2 as rs
 except ImportError:  # no RealSense wheel for macOS: the GUI then runs without video
@@ -778,6 +780,9 @@ class Camera:
             color, hsv = self.classify_color(contour)
 
             p_world = self.block_world_position(cx, cy)
+            # A small block slightly off-center on another small block merges with it into one
+            # outline wide enough to look big: trust the height when only one size fits it.
+            size = size_from_height(p_world[2]) or size
 
             self.block_detections.append({
                 "contour": contour,

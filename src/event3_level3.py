@@ -14,6 +14,7 @@ import time
 import cv2
 import numpy as np
 
+from blocks import STACK_TOL_MM, stack_error
 from kinematics import Q_DEFAULT
 
 BLOCK_H = {"big": 38.0, "small": 25.0}
@@ -33,8 +34,8 @@ LINE_SIDE = {"big": -1.0, "small": 1.0}   # sign of y for each line
 HOVER_Z = 3 * BLOCK_H["big"] + BLOCK_H["big"] / 2 + 25.0
 
 # What makes a detection a cube rather than a distractor.
-SIDE_TOL_MM = 7.0      # top face this close to a cube's edge length
-HEIGHT_TOL_MM = 8.0    # top this close to a cube on the board or on up to two cubes
+SIDE_TOL_MM = 7.0      # top face no smaller than a cube's edge length less this,
+MERGE_TOL_MM = 12.0    # and no bigger than it plus this: an off-center cube underneath can merge into the outline
 MIN_FILL = 0.85        # contour area / its min-area rectangle: square ~1, circle 0.79, triangle 0.5
 
 # Jaw clearance when picking: a cube can be gripped from two directions 90 deg apart,
@@ -57,10 +58,9 @@ def is_cube(d):
     if d["color"] not in RANK:
         return False
     side = BLOCK_H[d["size"]]
-    if abs(d.get("side_mm", side) - side) > SIDE_TOL_MM:
+    if not -SIDE_TOL_MM <= d.get("side_mm", side) - side <= MERGE_TOL_MM:
         return False
-    below = d["world"][2] - side                 # top of whatever the block stands on
-    if not -HEIGHT_TOL_MM < below < 2 * BLOCK_H["big"] + HEIGHT_TOL_MM:
+    if stack_error(d["world"][2] - side) >= STACK_TOL_MM:   # must stand on the board or on cubes
         return False
     if "contour" in d:                           # the sim reports cubes only, without contours
         _, (w, h), _ = cv2.minAreaRect(d["contour"])
