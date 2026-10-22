@@ -2,11 +2,21 @@
 State machine for the arm lab runtime shell.
 """
 import time
-import traceback
 
 from PyQt5.QtCore import QThread, pyqtSignal
 # import lite6arm
 import numpy as np
+
+from kinematics import Q_DEFAULT
+from event1 import Event1
+from event1_level2 import Event1Level2
+
+# --- pick & place geometry (mm) ---
+FLANGE_TO_GRASP_MM = 110.0      # grasp point is 85 mm below the flange along the tool axis
+APPROACH_CLEARANCE_MM = 100.0  # flange stays this far above the grasp/place pose when moving sideways
+PLACE_DROP_MM = 5.0            # release the block slightly above the surface, not pressed into it
+BLOCK_H = {"big": 38.0, "small": 25.0}
+SNAP_RADIUS_MM = 40.0          # a click within this distance of a detected block snaps to that block
 
 class StateMachine:
 
@@ -16,7 +26,6 @@ class StateMachine:
         self.status_message = "Idle - waiting for input."
         self.current_state = "idle"
         self.next_state = "idle"
-        self.custom_button = None   # (label, function) of the custom button clicked last
 
         self._handlers = {
             "initial_pose":      self.initial_pose,
@@ -28,11 +37,20 @@ class StateMachine:
             "playback_waypoints":self.playback_waypoints,
             "direct_control":    self.direct_control,
             "pick_place":        self.pick_place,
-            "custom_button":     self.run_custom_button,
             "check_3d":          self.check_3d,
+            "event1":            self.event1,
+            "event1l2":          self.event1l2,
         }
 
         self.waypoints = []
+
+        # pick & place
+        self.holding_block = False
+        self.held_block_h = BLOCK_H["big"]
+        self.held_yaw = 0.0
+
+        self.event1_task = Event1(self)
+        self.event1l2_task = Event1Level2(self)
 
     def set_next_state(self, state):
         self.next_state = state
@@ -134,38 +152,178 @@ class StateMachine:
             #     self.arm.
         self._go_idle("finished!")
 
+    # ------------------------------------------------------------------
+    # Pick & place
+    # ------------------------------------------------------------------
     def pick_place(self):
-        # TODO: student lab
-        # Student lab: click an object in the video feed to pick it up and place it.
-        # 1. Poll camera.new_click; when True, read camera.last_click for pixel (u, v).
-        # 2. camera.image_to_world(u, v) -> world XYZ using live depth + extrinsics.
-        # 3. arm.get_ik(pose) -> joint angles; arm.set_joint_angles(...) to move above object.
-        # 4. arm.close_gripper() to grasp, move to drop position, arm.open_gripper().
-        # State persists until the GUI toggle is unchecked.
+        # Called every loop while the Pick & Place box is checked: return fast unless there is a click.
         if self.current_state != "pick_place":
-            self.status_message = "Pick & Place - click an object in the video feed."
             self.current_state = "pick_place"
+            self.holding_block = False
+            self.camera.new_click = False      # ignore clicks made before the mode was turned on
+            self.status_message = "Pick & Place - click a block to pick up."
 
-    def run_custom_button(self):
-        # Run the clicked custom button's function(arm, camera) to the end in this
-        # thread (CUSTOM_BUTTONS in control_station.py). STOP stops the arm, so the
-        # function's arm calls fail and it returns early.
-        label, function = self.custom_button
-        if not self.arm.connected or not self.arm.initialized:
-            self._go_idle(f"{label}: initialize the arm first.")
+        if not self.camera.new_click:
             return
-        self.current_state = self.next_state
-        try:
-            function(self.arm, self.camera)
-            message = f"{label} finished."
-        except Exception as exc:
-            traceback.print_exc()
-            message = f"{label} failed: {exc}"
-        if self.next_state == self.current_state:
-            self._go_idle(message)
-        else:
-            self.status_message = message  # STOP asked for another state meanwhile: let it run
+        self.camera.new_click = False
 
+        target = self._click_to_world()
+        if target is None:
+            self.status_message = "No valid depth at that click - click again."
+            return
+
+        if not self.holding_block:
+            self._pick(target)
+        else:
+            self._place(target)
+
+    def _click_to_world(self, win=3):
+        """Last click -> world (x, y, z) mm. Median depth so one bad pixel can't ruin it."""
+        u, v = (int(c) for c in self.camera.last_click)
+        depth = self.camera.depth_frame_raw
+        h, w = depth.shape
+        patch = depth[max(v - win, 0):min(v + win + 1, h), max(u - win, 0):min(u + win + 1, w)]
+        valid = patch[patch > 0]
+        if valid.size == 0:
+            return None
+
+        K = self.camera.intrinsic_matrix
+        Zc = float(np.median(valid)) * self.camera.depth_scale_mm
+        Xc = (u - K[0, 2]) * Zc / K[0, 0]
+        Yc = (v - K[1, 2]) * Zc / K[1, 1]
+        p = self.camera.camera_to_world(np.array([Xc, Yc, Zc]))
+        return None if p is None else p[:3]
+
+    def _snap_to_block(self, x, y):
+        """Nearest detected block within SNAP_RADIUS_MM of (x, y), or None."""
+        best, best_dist = None, SNAP_RADIUS_MM
+        for d in getattr(self.camera, "block_detections", []):
+            dist = np.hypot(d["world"][0] - x, d["world"][1] - y)
+            if dist < best_dist:
+                best, best_dist = d, dist
+        return best
+
+    def _block_yaw(self, d):
+        """Gripper yaw (rad) that closes the jaws square across detected block d.
+        Squares repeat every 90 deg, so wrap to [-45, 45) and the wrist turns the short way."""
+        return np.radians((d["angle_degree"] + 45.0) % 90.0 - 45.0)
+
+    def _flange_pose(self, x, y, z_grasp, yaw=0.0):
+        """Top-down grasp: tool pointing straight down, flange 85 mm above the grasp point."""
+        return [x, y, z_grasp + FLANGE_TO_GRASP_MM, np.pi, 0.0, yaw]
+
+    def _solve(self, pose):
+        q = self.arm.get_ik(pose)
+        return None if q is None else list(q)
+
+    def _move(self, q):
+        self.arm.set_joint_angles(q, wait=True)
+
+    def _pick(self, target):
+        x, y, z_top = target
+        size = "big" if z_top > 31.5 else "small"   # fallback when no block is detected near the click
+        yaw = 0.0
+
+        d = self._snap_to_block(x, y)
+        if d is not None:
+            x, y, z_top = (float(v) for v in d["world"][:3])   # block's top-face center
+            size = d["size"]
+            # squares repeat every 90 deg: wrap to [-45, 45) so the wrist turns the short way
+            yaw = self._block_yaw(d)
+
+        block_h = BLOCK_H[size]
+        z_grasp = z_top - block_h / 2.0              # grasp at the block's center height
+
+        print("*******************")
+        print("picking up block: ")
+        print(f"degree: {np.rad2deg(yaw)}")
+        print(f"world p: {(x, y, z_top)}")
+        print("*******************")
+
+        grasp = self._flange_pose(x, y, z_grasp, -yaw)
+        approach = self._flange_pose(x, y, z_grasp + APPROACH_CLEARANCE_MM, -yaw)
+
+        # Solve everything before moving, so an unreachable pose never stops the arm halfway.
+        q_approach, q_grasp = self._solve(approach), self._solve(grasp)
+        if q_approach is None or q_grasp is None:
+            self.status_message = f"({x:.0f}, {y:.0f}) is unreachable - click another block."
+            return
+
+        print(f"Pick: {size} block at ({x:.0f}, {y:.0f}, {z_top:.0f}), yaw {np.degrees(yaw):.0f} deg")
+        self.arm.open_gripper(wait=True)
+        self._move(q_approach)                       # above the block
+        self._move(q_grasp)                          # straight down
+        self.arm.close_gripper(wait=True)
+        self._move(q_approach)                       # straight up
+
+        self.holding_block = True
+        self.held_block_h = block_h
+        self.held_yaw = yaw
+        self.camera.new_click = False                # ignore clicks made while the arm was moving
+        self.status_message = "Holding block - click where to place it."
+
+    def _place(self, target):
+        x, y, z_surface = target                     # the clicked point is the surface to put it on
+        yaw = self.held_yaw                          # on the table: keep the angle it was picked at
+        d = self._snap_to_block(x, y)
+        if d is not None:                            # clicked near a block -> stack centered on it,
+            x, y, z_surface = (float(v) for v in d["world"][:3])
+            yaw = self._block_yaw(d)                 # turned to match the block underneath
+
+        # Center of the held block when its bottom sits just above the surface.
+        z_grasp = z_surface + self.held_block_h / 2.0 + PLACE_DROP_MM
+
+        place = self._flange_pose(x, y, z_grasp, -yaw)
+        approach = self._flange_pose(x, y, z_grasp + APPROACH_CLEARANCE_MM, -yaw)
+
+        q_approach, q_place = self._solve(approach), self._solve(place)
+        if q_approach is None or q_place is None:
+            self.status_message = f"({x:.0f}, {y:.0f}) is unreachable - click another spot."
+            return
+
+        print(f"Place: at ({x:.0f}, {y:.0f}, {z_surface:.0f})")
+        self._move(q_approach)
+        self._move(q_place)
+        self.arm.open_gripper(wait=True)
+        self._move(q_approach)
+        self._move(list(Q_DEFAULT))                  # out of the camera's view for the next click
+
+        self.holding_block = False
+        self.camera.new_click = False
+        self.status_message = "Placed - click a block to pick up."
+
+    # ------------------------------------------------------------------
+    # Event 1: sort blocks (one block per call, see event1.py)
+    # ------------------------------------------------------------------
+    def event1(self):
+        if self.current_state != "event1":
+            if not self.arm.connected or not self.arm.initialized:
+                self._go_idle("Initialize the arm before running Event 1.")
+                return
+            self.current_state = "event1"
+            self.holding_block = False
+            self.event1_task.reset()
+            self.status_message = "Event 1: sorting blocks..."
+            return                                   # publish the status before the arm moves
+
+        done_message = self.event1_task.step()
+        if done_message:
+            self._go_idle(done_message)
+
+    def event1l2(self):
+            if self.current_state != "event1l2":
+                if not self.arm.connected or not self.arm.initialized:
+                    self._go_idle("Initialize the arm before running Event 1.")
+                    return
+                self.current_state = "event1l2"
+                self.holding_block = False
+                self.event1l2_task.reset()
+                self.status_message = "Event 1 Level 2: sorting blocks..."
+                return                                   # publish the status before the arm moves
+    
+            done_message = self.event1l2_task.step()
+            if done_message:
+                self._go_idle(done_message)
 
     def check_3d(self):
         _, self.status_message = self.camera.check_3d_point(self.arm.get_ee_pose_sdk())
