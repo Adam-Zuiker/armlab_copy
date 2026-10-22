@@ -4,7 +4,8 @@ arm at y < 0, small cubes in another at y > 0 - and leave the distractors (other
 where they are. Stacks are up to three high.
 
 Every color has its own slot in its line, so the blocks can go in any order: the highest
-visible cube is picked first, which takes the stacks apart from the top.
+visible cube is picked first, which takes the stacks apart from the top. A slot takes one
+block only: a cube whose color's slot is taken (a color misread) goes to the nearest free one.
 
 One pick & place per call to step(), so the state machine can update the status between blocks.
 After each place the arm stays above the lines and senses again from there.
@@ -46,11 +47,12 @@ NEIGHBOR_MM = 100.0    # detections farther than this from the cube don't matter
 SETTLE_S = 0.5      # after the arm leaves the camera's view, let detections refresh
 RESENSE_S = 0.2     # same, sensing from above the lines after a place
 MAX_TRIES = 3       # picks of one block before giving up on it
+SAME_SPOT_MM = 15.0 # a detection this close to a pick (in x, y and in height) is the block picked there
 
 
-def slot(size, color):
-    """(x, y) of a cube's place in its line."""
-    return LINE_X, LINE_SIDE[size] * (LINE_Y0 + PITCH[size] * RANK[color])
+def slot(size, i):
+    """(x, y) of slot i of a line: slot RANK[color] is that color's place."""
+    return LINE_X, LINE_SIDE[size] * (LINE_Y0 + PITCH[size] * i)
 
 
 def reject_reason(d):
@@ -84,19 +86,32 @@ class Event2Level3:
         self.reset()
 
     def reset(self):
-        self.filled = set()  # (color, size) of the cubes in their slots
-        self.skipped = set() # (color, size) given up on
+        # Color of the block placed in each slot, None while free. A slot only ever takes one
+        # block: one detected in the wrong color, whose slot is taken, goes to the nearest free one.
+        self.slots = {"big": [None] * len(ROYGBV), "small": [None] * len(ROYGBV)}
+        self.misses = []     # world (x, y, z) of picks that left the block where it was
+        self.skipped = []    # (world (x, y, z), label) of blocks given up on
         self.at_home = False
-        self.last = None     # (color, size) of the block placed last, until its place is confirmed
-        self.tries = {}      # (color, size) -> picks so far
+        self.last = None     # (detection, size, slot) of the block placed last, until its place is confirmed
 
     def _sense(self):
         """Everything still in front of the arm (+x half-plane): cubes and distractors."""
         return [d for d in self.sm.camera.block_detections if d["world"][0] > 0]
 
+    @staticmethod
+    def _at(d, p):
+        """True if detection d is at world point p: the same spot and the same height."""
+        x, y, z = d["world"][:3]
+        return np.hypot(x - p[0], y - p[1]) < SAME_SPOT_MM and abs(z - p[2]) < SAME_SPOT_MM
+
     def _todo(self, seen):
         """Cubes in seen that still need a place in a line."""
-        return [d for d in seen if is_cube(d) and (d["color"], d["size"]) not in self.filled | self.skipped]
+        return [d for d in seen if is_cube(d) and not any(self._at(d, p) for p, _ in self.skipped)]
+
+    def _free_slot(self, size, color):
+        """The color's slot in the size's line, or the free one nearest it, or None if the line is full."""
+        free = [i for i, c in enumerate(self.slots[size]) if c is None]
+        return min(free, key=lambda i: abs(i - RANK[color])) if free else None
 
     def _go_home_and_sense(self):
         self.sm._move(list(Q_DEFAULT))               # out of the camera's view
@@ -124,9 +139,13 @@ class Event2Level3:
 
     def _summary(self, seen=None):
         """Result so far. With seen (the last detections), also what was left in front and why."""
-        msg = f"{len(self.filled)} of 12 cubes lined up"
+        placed = [(i, c) for line in self.slots.values() for i, c in enumerate(line) if c is not None]
+        msg = f"{len(placed)} of 12 cubes lined up"
+        out_of_order = sum(c != ROYGBV[i] for i, c in placed)
+        if out_of_order:
+            msg += f" ({out_of_order} out of order: their color's slot was taken)"
         if self.skipped:
-            msg += ", skipped " + ", ".join(f"{c} {s}" for c, s in sorted(self.skipped))
+            msg += ", skipped " + ", ".join(label for _, label in self.skipped)
         msg += "."
         if seen is None:
             return msg
@@ -149,13 +168,15 @@ class Event2Level3:
             time.sleep(RESENSE_S)                    # sense from above the lines
             seen = self._sense()
 
-        # Confirm the last place: no gripper feedback, so a missed pick shows up as
-        # the block still waiting in front of the arm. Cubes only: a distractor may share its color.
+        # Confirm the last place: no gripper feedback, so a missed pick shows up as a block
+        # still where it was picked, at the same height. Not by color: two blocks can be
+        # detected in the same color, and the block under the picked one sits lower.
         todo = self._todo(seen)
         if self.last is not None:
-            if not any((d["color"], d["size"]) == self.last for d in todo):
-                self.filled.add(self.last)
-                todo = self._todo(seen)
+            d, size, i = self.last
+            if any(self._at(o, d["world"]) for o in todo):
+                self.slots[size][i] = None
+                self.misses.append(d["world"][:3])
             self.last = None
 
         if not todo and not self.at_home:
@@ -166,26 +187,32 @@ class Event2Level3:
             return "Event 2 L3 done - " + self._summary(seen)
 
         d = max(todo, key=lambda d: d["world"][2])   # highest first: stacks come apart from the top
-        key = (d["color"], d["size"])
-        self.tries[key] = self.tries.get(key, 0) + 1
-        if self.tries[key] > MAX_TRIES:
-            self.skipped.add(key)
-            sm.status_message = f"Event 2 L3: could not pick the {key[0]} {key[1]} block, skipping it..."
+        label = f"{d['color']} {d['size']}"
+        p = d["world"][:3]
+        if sum(self._at(d, m) for m in self.misses) >= MAX_TRIES:
+            self.skipped.append((p, label))
+            sm.status_message = f"Event 2 L3: could not pick the {label} block, skipping it..."
+            return None
+        i = self._free_slot(d["size"], d["color"])
+        if i is None:
+            self.skipped.append((p, label))
+            sm.status_message = f"Event 2 L3: the {d['size']} line is full, skipping the {label} block..."
             return None
 
         self.at_home = False
-        sm._pick(d["world"], yaw=self._jaw_yaw(d, seen), hover_z=HOVER_Z)
+        sm._pick(p, yaw=self._jaw_yaw(d, seen), hover_z=HOVER_Z)
         if not sm.holding_block:
-            self.skipped.add(key)
-            sm.status_message = f"Event 2 L3: cannot reach the {key[0]} {key[1]} block, skipping it..."
+            self.skipped.append((p, label))
+            sm.status_message = f"Event 2 L3: cannot reach the {label} block, skipping it..."
             return None
 
-        x, y = slot(d["size"], d["color"])
+        x, y = slot(d["size"], i)
         sm.held_yaw = -LINE_SIDE[d["size"]] * np.pi / 2   # jaws close across the line, clear of the neighbors
         sm._place((x, y, 0.0), go_home=False, hover_z=HOVER_Z, snap=False)
         if sm.holding_block:
             return "Event 2 L3 stopped - could not reach a slot, still holding the block. " + self._summary()
 
-        self.last = key
-        sm.status_message = f"Event 2 L3: placed the {key[0]} {key[1]} block..."
+        self.slots[d["size"]][i] = d["color"]
+        self.last = (d, d["size"], i)
+        sm.status_message = f"Event 2 L3: placed the {label} block..."
         return None

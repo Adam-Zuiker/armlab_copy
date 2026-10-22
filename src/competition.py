@@ -58,11 +58,9 @@ def jaw_yaw(x, y, block_yaw):
 
 
 def move_to(arm, pose):
-    """Blocking joint move to a flange pose, with your IK_geometric, or IK_numerical
-    if that finds nothing. False if unreachable, failed or stopped."""
-    q = arm.get_ik(pose)
-    if q is None:
-        q = arm.get_ik_numerical(pose)
+    """Blocking joint move to a flange pose, with your IK_numerical. False if unreachable,
+    failed or stopped."""
+    q = arm.get_ik_numerical(pose)
     if q is None:
         print(f"No IK solution for {np.round(pose, 1)}")
         return False

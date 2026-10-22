@@ -222,13 +222,42 @@ class StateMachine:
         """Top-down grasp: tool pointing straight down, flange 85 mm above the grasp point."""
         return [x, y, z_grasp + FLANGE_TO_GRASP_MM, np.pi, 0.0, yaw]
 
+    def _wrist_yaw(self, x, y, yaw, period):
+        """The yaw + k * period that turns the flange (to -yaw) closest to pointing along (x, y)
+        from the base, which keeps joints 4 and 6 near zero instead of twisting the wrist.
+        period: pi keeps the line the jaws close along, pi / 2 is free for a cube."""
+        radial = np.arctan2(y, x)
+        return -(radial + ((-yaw - radial + period / 2) % period - period / 2))
+
+    def _closest_equivalent(self, q, ref):
+        """Of the joint angles that put the flange where q does - q, q with the wrist flipped
+        (joint 4 + 180 deg, joint 5 negated, joint 6 + 180 deg), and joints 1, 4 and 6 a whole
+        turn either way - the one within the joint limits closest to ref."""
+        q, ref = np.asarray(q, dtype=float), np.asarray(ref, dtype=float)
+        lo, hi = np.asarray(self.arm.joint_limits, dtype=float).T
+        flipped = q + np.array([0.0, 0.0, 0.0, np.pi, 0.0, np.pi])
+        flipped[4] = -q[4]
+        best, best_cost = q, np.inf
+        for c in (q, flipped):
+            c = c.copy()
+            for j in (0, 3, 5):                      # these turn freely: take the turn nearest ref
+                turns = [c[j] + k * 2 * np.pi for k in range(-2, 3)]
+                turns = [v for v in turns if lo[j] <= v <= hi[j]] or [c[j]]
+                c[j] = min(turns, key=lambda v: abs(v - ref[j]))
+            if np.all((c >= lo - 1e-6) & (c <= hi + 1e-6)) and np.sum((c - ref) ** 2) < best_cost:
+                best, best_cost = c, np.sum((c - ref) ** 2)
+        return list(best)
+
     def _solve(self, pose, seed=None):
-        """Vendor (SDK) IK on the real arm, our numerical IK in the sim, which has no SDK.
-        seed: joint angles of a neighboring pose (e.g. the approach above a grasp), so the
-        numerical IK stays on that pose's wrist solution instead of flipping the wrist between them."""
-        real = getattr(self.arm, "xarm", None) is not None
-        q = self.arm.get_ik_sdk(pose) if real else self.arm.get_ik_numerical(pose, q0=seed)
-        return None if q is None else list(q)
+        """Joint angles for pose from our numerical IK, or None. seed: joint angles of a
+        neighboring pose (e.g. the approach above a grasp); the answer is the equivalent solution
+        closest to it (or to where the arm is now), so the wrist does not flip or twist between
+        poses that don't need it."""
+        q = self.arm.get_ik_numerical(pose, q0=seed)
+        if q is None:
+            return None
+        ref = seed if seed is not None else self.arm.get_joint_angles()
+        return self._closest_equivalent(q, Q_DEFAULT if ref is None else ref)
 
     def _move(self, q):
         self.arm.set_joint_angles(q, wait=True)
@@ -252,7 +281,9 @@ class StateMachine:
             # squares repeat every 90 deg: wrap to [-45, 45) so the wrist turns the short way
             yaw = self._block_yaw(d)
         if yaw_override is not None:
-            yaw = yaw_override
+            yaw = self._wrist_yaw(x, y, yaw_override, np.pi)   # same jaw line as asked for
+        else:
+            yaw = self._wrist_yaw(x, y, yaw, np.pi / 2)        # a cube grips the same every 90 deg
 
         block_h = BLOCK_H[size]
         z_bottom = z_top - block_h
@@ -306,6 +337,7 @@ class StateMachine:
         if d is not None:                            # clicked near a block -> stack centered on it,
             x, y, z_surface = (float(v) for v in d["world"][:3])
             yaw = self._block_yaw(d)                 # turned to match the block underneath
+        yaw = self._wrist_yaw(x, y, yaw, np.pi)      # same jaw line, the wrist turned the short way
 
         # Grasp point when the held block's bottom sits just above the surface.
         z_grasp = z_surface + self.held_grasp_above_bottom + PLACE_DROP_MM

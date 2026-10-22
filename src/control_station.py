@@ -545,34 +545,28 @@ class Gui(QMainWindow):
         pose = pose_display[:3] + list(np.radians(pose_display[3:]))
 
         # Column A uses the SDK solver on the real arm and our closed form in
-        # sim; column B is always our numerical solver, seeded from the current
-        # joint angles. Both columns are shown so they can be compared.
+        # sim, shown for comparison only; column B, our numerical solver, is
+        # what Go To Pose runs.
         result_a = self.arm.get_ik(pose) if self.arm_mode == "sim" else self.arm.get_ik_sdk(pose)
         result_b = self.arm.get_ik_numerical(pose)
         self._ik_result = None
         self.arm.set_ghost(None)   # hide the stale preview; re-shown below if a solution lands
 
-        violations_a = self._show_ik_column(self.ui.ik_result_labels, result_a)
+        self._show_ik_column(self.ui.ik_result_labels, result_a)
         violations_b = self._show_ik_column(self.ui.ik_result_labels_num, result_b)
 
-        if result_a is None and result_b is None:
-            self._set_status_message("IK: no solution found for the requested end-effector pose.")
+        if result_b is None:
+            self._set_status_message("IK: no numerical solution found for the requested end-effector pose.")
             self._update_ik_goto_enabled()
             return
 
-        # Go To Pose prefers column A (predictable closed form / vendor solver)
-        # and falls back to the numerical solution when A is unusable.
-        name_a = 'geometric' if self.arm_mode == "sim" else 'SDK'
-        if violations_a == []:
-            self._ik_result = list(result_a)
-            note = f"using the {name_a} solution"
-        elif violations_b == []:
+        # Go To Pose uses column B, our numerical solver; column A is shown for comparison only.
+        if violations_b == []:
             self._ik_result = list(result_b)
-            reason = "found none" if violations_a is None else "is outside the joint limits"
-            note = f"using the numerical solution ({name_a} {reason})"
+            note = "using the numerical solution"
         else:
             self._update_ik_goto_enabled()
-            broken = sorted(set((violations_a or []) + (violations_b or [])))
+            broken = sorted(set(violations_b))
             names = ", ".join(broken)
             verb = "is" if len(broken) == 1 else "are"
             self._set_status_message(f"IK: solution found, but {names} {verb} outside the joint limits.")
