@@ -18,7 +18,7 @@ from ui.layout import Ui_MainWindow
 from ui.style import STYLE
 
 EVENT1L2_SPEED_PCT = 80   # Event 1 L2 is timed: the button sets the speed slider to this
-EVENT2L3_SPEED_PCT = 60   # Event 2 L3 has 600 s for 12 blocks: slower, for tighter lines
+EVENT2L3_SPEED_PCT = 40  # Event 2 L3 has 600 s for 12 blocks: slower, for tighter lines
 
 
 class Gui(QMainWindow):

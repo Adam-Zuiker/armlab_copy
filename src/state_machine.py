@@ -15,6 +15,9 @@ from event3_level3 import Event2Level3
 
 # --- pick & place geometry (mm) ---
 FLANGE_TO_GRASP_MM = 85.0      # grasp point is 85 mm below the flange along the tool axis
+FLANGE_TO_TIP_MM = 96.4        # finger tips are 96.4 mm below the flange
+GRASP_RAISE_MM = 5.0           # grip this far above the block's center (tune: higher = grip nearer the top)
+TIP_CLEARANCE_MM = 3.0         # and keep the finger tips at least this far above what the block stands on
 APPROACH_CLEARANCE_MM = 100.0  # flange stays this far above the grasp/place pose when moving sideways
 PLACE_DROP_MM = 5.0            # release the block slightly above the surface, not pressed into it
 PLACE_SETTLE_S = 0.3           # let the arm stop swaying before letting go of a block
@@ -52,6 +55,7 @@ class StateMachine:
         # pick & place
         self.holding_block = False
         self.held_block_h = BLOCK_H["big"]
+        self.held_grasp_above_bottom = BLOCK_H["big"] / 2.0
         self.held_yaw = 0.0
 
         self.event1_task = Event1(self)
@@ -249,7 +253,10 @@ class StateMachine:
             yaw = yaw_override
 
         block_h = BLOCK_H[size]
-        z_grasp = z_top - block_h / 2.0              # grasp at the block's center height
+        z_bottom = z_top - block_h
+        z_grasp = max(z_bottom + block_h / 2.0 + GRASP_RAISE_MM,
+                      z_bottom + TIP_CLEARANCE_MM + FLANGE_TO_TIP_MM - FLANGE_TO_GRASP_MM)
+        z_grasp = min(z_grasp, z_top)                # never above the top face
 
         print("*******************")
         print("picking up block: ")
@@ -281,6 +288,7 @@ class StateMachine:
 
         self.holding_block = True
         self.held_block_h = block_h
+        self.held_grasp_above_bottom = z_grasp - z_bottom
         self.held_yaw = yaw
         self.camera.new_click = False                # ignore clicks made while the arm was moving
         self.status_message = "Holding block - click where to place it."
@@ -296,8 +304,8 @@ class StateMachine:
             x, y, z_surface = (float(v) for v in d["world"][:3])
             yaw = self._block_yaw(d)                 # turned to match the block underneath
 
-        # Center of the held block when its bottom sits just above the surface.
-        z_grasp = z_surface + self.held_block_h / 2.0 + PLACE_DROP_MM
+        # Grasp point when the held block's bottom sits just above the surface.
+        z_grasp = z_surface + self.held_grasp_above_bottom + PLACE_DROP_MM
 
         place = self._flange_pose(x, y, z_grasp, -yaw)
         approach = self._flange_pose(x, y, z_grasp + APPROACH_CLEARANCE_MM, -yaw)
