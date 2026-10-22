@@ -29,7 +29,7 @@ A cross-platform software bridge of a nominal robot controller to Mujoco simulat
 1. Check the communication status and visualize data:
     ```sh
     550-lcm-spy
-    ```
+    ``
 
 ### Re-generating LCM types
 Only needed if you change anything in `lcm_types/`. Requires java - type `javac` to verify.

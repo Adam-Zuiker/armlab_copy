@@ -775,7 +775,7 @@ class Camera:
 
             angle_deg = angle % 90
 
-            color = self.classify_color(contour)
+            color, hsv = self.classify_color(contour)
 
             p_world = self.block_world_position(cx, cy)
 
@@ -792,7 +792,8 @@ class Camera:
             box = cv2.boxPoints(((cx, cy), (w, h), angle)).astype(np.int32)
             cv2.drawContours(self.workspace_frame, [box], 0, (255, 0, 0), 2)
             lines = [f"{color} {size} {angle_deg}",
-                     f"{p_world[0]:.0f} {p_world[1]:.0f} {p_world[2]:.0f}"]
+                     f"{p_world[0]:.0f} {p_world[1]:.0f} {p_world[2]:.0f}",
+                     f'h: {hsv[0]}, s:']
             for i, line in enumerate(lines):
                 cv2.putText(self.workspace_frame, line, (int(cx), int(cy) + i * 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)  
 
@@ -817,7 +818,7 @@ class Camera:
         hsv = cv2.cvtColor(self.video_frame, cv2.COLOR_RGB2HSV)
         h, s, v = [int(np.median(ch[mask>0])) for ch in cv2.split(hsv)]
 
-        return self.hsv_to_color(h, s, v)
+        return self.hsv_to_color(h, s, v), (h,s,v)
 
 
     def block_world_position(self, cx, cy):

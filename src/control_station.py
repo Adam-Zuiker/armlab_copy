@@ -18,6 +18,7 @@ from ui.layout import Ui_MainWindow
 from ui.style import STYLE
 
 EVENT1L2_SPEED_PCT = 80   # Event 1 L2 is timed: the button sets the speed slider to this
+EVENT2L3_SPEED_PCT = 60   # Event 2 L3 has 600 s for 12 blocks: slower, for tighter lines
 
 
 class Gui(QMainWindow):
@@ -59,16 +60,19 @@ class Gui(QMainWindow):
         self.ui.btn_calibrate.clicked.connect(partial(self.sm.set_next_state, "calibrate"))
         self.ui.chk_pick_place.stateChanged.connect(self._pick_place_chk)
         # The sim board reset and the events run from the custom buttons (ui/layout.py)
-        btn_reset_board, self.ui.btn_event1, self.ui.btn_event1l2 = self.ui.custom_buttons[:3]
+        btn_reset_board, self.ui.btn_event1, self.ui.btn_event1l2, self.ui.btn_event2l3 = self.ui.custom_buttons[:4]
         btn_reset_board.setText("Reset Board (Sim)")
         self.ui.btn_event1.setText("Event 1")
         self.ui.btn_event1l2.setText("Event 1 L2")
+        self.ui.btn_event2l3.setText("Event 2 L3")
         btn_reset_board.setEnabled(arm_mode == "sim")
         self.ui.btn_event1.setEnabled(True)
         self.ui.btn_event1l2.setEnabled(True)
+        self.ui.btn_event2l3.setEnabled(True)
         btn_reset_board.clicked.connect(partial(self.sm.set_next_state, "reset_board"))
         self.ui.btn_event1.clicked.connect(self._event1)
         self.ui.btn_event1l2.clicked.connect(self._event1l2)
+        self.ui.btn_event2l3.clicked.connect(self._event2l3)
         self.ui.btn_add_wp.clicked.connect(partial(self.sm.set_next_state, "add_waypoint"))
         self.ui.btn_clear_wps.clicked.connect(partial(self.sm.set_next_state, "clear_waypoints"))
         self.ui.btn_playback_wps.clicked.connect(partial(self.sm.set_next_state, "playback_waypoints"))
@@ -417,6 +421,7 @@ class Gui(QMainWindow):
             self.ui.chk_pick_place,
             self.ui.btn_event1,
             self.ui.btn_event1l2,
+            self.ui.btn_event2l3,
         ]
         if locked:
             self._pre_manual_widget_states = {w: w.isEnabled() for w in widgets}
@@ -502,6 +507,13 @@ class Gui(QMainWindow):
         self.ui.chk_pick_place.setChecked(False)     # click pick & place would fight over the arm
         self.ui.sldrMoveTime.setValue(EVENT1L2_SPEED_PCT)   # sets the arm speed via _speed_slider_change
         self.sm.set_next_state("event1l2")
+
+    def _event2l3(self):
+        """Run Event 2 Level 3 (rainbow lines among distractors)."""
+        self.ui.chk_directcontrol.setChecked(False)
+        self.ui.chk_pick_place.setChecked(False)     # click pick & place would fight over the arm
+        self.ui.sldrMoveTime.setValue(EVENT2L3_SPEED_PCT)   # sets the arm speed via _speed_slider_change
+        self.sm.set_next_state("event2l3")
 
     def _initial_pose(self):
         """Leave direct control and request the initial arm pose."""

@@ -11,11 +11,13 @@ from kinematics import Q_DEFAULT
 from camera_sim import reset_board_event0
 from event1 import Event1
 from event1_level2 import Event1Level2
+from event3_level3 import Event2Level3
 
 # --- pick & place geometry (mm) ---
 FLANGE_TO_GRASP_MM = 85.0      # grasp point is 85 mm below the flange along the tool axis
 APPROACH_CLEARANCE_MM = 100.0  # flange stays this far above the grasp/place pose when moving sideways
 PLACE_DROP_MM = 5.0            # release the block slightly above the surface, not pressed into it
+PLACE_SETTLE_S = 0.3           # let the arm stop swaying before letting go of a block
 BLOCK_H = {"big": 38.0, "small": 25.0}
 SNAP_RADIUS_MM = 40.0          # a click within this distance of a detected block snaps to that block
 
@@ -41,6 +43,7 @@ class StateMachine:
             "check_3d":          self.check_3d,
             "event1":            self.event1,
             "event1l2":          self.event1l2,
+            "event2l3":          self.event2l3,
             "reset_board":       self.reset_board,
         }
 
@@ -53,6 +56,7 @@ class StateMachine:
 
         self.event1_task = Event1(self)
         self.event1l2_task = Event1Level2(self)
+        self.event2l3_task = Event2Level3(self)
 
     def set_next_state(self, state):
         self.next_state = state
@@ -215,16 +219,25 @@ class StateMachine:
         return [x, y, z_grasp + FLANGE_TO_GRASP_MM, np.pi, 0.0, yaw]
 
     def _solve(self, pose):
-        q = self.arm.get_ik(pose)
+        """Vendor (SDK) IK on the real arm, ours in the sim, which has no SDK."""
+        real = getattr(self.arm, "xarm", None) is not None
+        q = self.arm.get_ik_sdk(pose) if real else self.arm.get_ik(pose)
         return None if q is None else list(q)
 
     def _move(self, q):
         self.arm.set_joint_angles(q, wait=True)
 
-    def _pick(self, target):
+    def _hover_pose(self, x, y, hover_z, yaw):
+        """Flange pose with the grasp point at hover_z (mm) over (x, y), or None for no hover."""
+        return None if hover_z is None else self._flange_pose(x, y, hover_z, yaw)
+
+    def _pick(self, target, yaw=None, hover_z=None):
+        """yaw overrides the jaw yaw from the detected block. hover_z (grasp point height, mm)
+        adds a stop that high above the block before going down and after coming up,
+        to carry blocks over tall stacks."""
         x, y, z_top = target
         size = "big" if z_top > 31.5 else "small"   # fallback when no block is detected near the click
-        yaw = 0.0
+        yaw_override, yaw = yaw, 0.0
 
         d = self._snap_to_block(x, y)
         if d is not None:
@@ -232,6 +245,8 @@ class StateMachine:
             size = d["size"]
             # squares repeat every 90 deg: wrap to [-45, 45) so the wrist turns the short way
             yaw = self._block_yaw(d)
+        if yaw_override is not None:
+            yaw = yaw_override
 
         block_h = BLOCK_H[size]
         z_grasp = z_top - block_h / 2.0              # grasp at the block's center height
@@ -244,19 +259,25 @@ class StateMachine:
 
         grasp = self._flange_pose(x, y, z_grasp, -yaw)
         approach = self._flange_pose(x, y, z_grasp + APPROACH_CLEARANCE_MM, -yaw)
+        hover = self._hover_pose(x, y, hover_z, -yaw)
 
         # Solve everything before moving, so an unreachable pose never stops the arm halfway.
         q_approach, q_grasp = self._solve(approach), self._solve(grasp)
-        if q_approach is None or q_grasp is None:
+        q_hover = None if hover is None else self._solve(hover)
+        if q_approach is None or q_grasp is None or (hover is not None and q_hover is None):
             self.status_message = f"({x:.0f}, {y:.0f}) is unreachable - click another block."
             return
 
         print(f"Pick: {size} block at ({x:.0f}, {y:.0f}, {z_top:.0f}), yaw {np.degrees(yaw):.0f} deg")
         self.arm.open_gripper()                      # queued: opens on the way to the approach, no dwell
+        if q_hover is not None:
+            self._move(q_hover)
         self._move(q_approach)                       # above the block
         self._move(q_grasp)                          # straight down
         self.arm.close_gripper(wait=True)
         self._move(q_approach)                       # straight up
+        if q_hover is not None:
+            self._move(q_hover)
 
         self.holding_block = True
         self.held_block_h = block_h
@@ -264,11 +285,13 @@ class StateMachine:
         self.camera.new_click = False                # ignore clicks made while the arm was moving
         self.status_message = "Holding block - click where to place it."
 
-    def _place(self, target, go_home=True):
-        """go_home=False stays above the place, for events that sense again from there."""
+    def _place(self, target, go_home=True, hover_z=None, snap=True):
+        """go_home=False stays above the place, for events that sense again from there.
+        hover_z: as in _pick, a stop that high before going down. snap=False places exactly
+        at target, even next to a block (no stacking on it)."""
         x, y, z_surface = target                     # the clicked point is the surface to put it on
         yaw = self.held_yaw                          # on the table: keep the angle it was picked at
-        d = self._snap_to_block(x, y)
+        d = self._snap_to_block(x, y) if snap else None
         if d is not None:                            # clicked near a block -> stack centered on it,
             x, y, z_surface = (float(v) for v in d["world"][:3])
             yaw = self._block_yaw(d)                 # turned to match the block underneath
@@ -279,14 +302,20 @@ class StateMachine:
         place = self._flange_pose(x, y, z_grasp, -yaw)
         approach = self._flange_pose(x, y, z_grasp + APPROACH_CLEARANCE_MM, -yaw)
 
+        hover = self._hover_pose(x, y, hover_z, -yaw)
+
         q_approach, q_place = self._solve(approach), self._solve(place)
-        if q_approach is None or q_place is None:
+        q_hover = None if hover is None else self._solve(hover)
+        if q_approach is None or q_place is None or (hover is not None and q_hover is None):
             self.status_message = f"({x:.0f}, {y:.0f}) is unreachable - click another spot."
             return
 
         print(f"Place: at ({x:.0f}, {y:.0f}, {z_surface:.0f})")
+        if q_hover is not None:
+            self._move(q_hover)
         self._move(q_approach)
         self._move(q_place)
+        time.sleep(PLACE_SETTLE_S)
         self.arm.open_gripper(wait=True)
         self._move(q_approach)
         if go_home:
@@ -328,6 +357,24 @@ class StateMachine:
             done_message = self.event1l2_task.step()
             if done_message:
                 self._go_idle(done_message)
+
+    # ------------------------------------------------------------------
+    # Event 2 Level 3: rainbow lines among distractors (one block per call, see event3_level3.py)
+    # ------------------------------------------------------------------
+    def event2l3(self):
+        if self.current_state != "event2l3":
+            if not self.arm.connected or not self.arm.initialized:
+                self._go_idle("Initialize the arm before running Event 2.")
+                return
+            self.current_state = "event2l3"
+            self.holding_block = False
+            self.event2l3_task.reset()
+            self.status_message = "Event 2 Level 3: lining up blocks..."
+            return                                   # publish the status before the arm moves
+
+        done_message = self.event2l3_task.step()
+        if done_message:
+            self._go_idle(done_message)
 
     def reset_board(self):
         """Sim only: arm to the initial pose, then blocks back to the Event 0 layout."""

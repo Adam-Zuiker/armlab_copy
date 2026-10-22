@@ -56,6 +56,9 @@ class Lite6Arm:
 
             self.joint_limits = XCONF.Robot.JOINT_LIMITS[self.num_joints][self.xarm.device_type]
             _, self.dh_params = self.xarm.get_dh_params()
+            # The SDK's IK and FK use the controller's TCP, but our poses are flange poses.
+            if np.any(np.abs(self.xarm.tcp_offset) > 1e-6):
+                print(f"WARNING: TCP offset {self.xarm.tcp_offset} is set - SDK IK/FK are off the flange")
         except Exception as exc:
             print(f"WARNING: Arm unavailable ({exc})")
 
@@ -262,7 +265,7 @@ class Lite6Arm:
             return None
         code, angles = self.xarm.get_inverse_kinematics(pose)
         if code == 0:
-            return angles
+            return list(angles[:self.num_joints])   # the SDK pads to 7 joints for the xArm 7
         print(f"WARNING: SDK IK failed (code={code})")
         return None
 
