@@ -316,6 +316,7 @@ def IK_numerical(dh_params, pose, q0=None, joint_limits=None, w_rot=200.0):
         q0 = Q_DEFAULT
     if joint_limits is None:
         joint_limits = JOINT_LIMITS
+    joint_limits = np.asarray(joint_limits, dtype=float)   # the arms pass a list of (lo, hi) pairs
 
     p_target = np.asarray(pose[:3], dtype=float)
     R_target = R.from_euler('xyz', pose[3:]).as_matrix()

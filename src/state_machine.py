@@ -222,10 +222,12 @@ class StateMachine:
         """Top-down grasp: tool pointing straight down, flange 85 mm above the grasp point."""
         return [x, y, z_grasp + FLANGE_TO_GRASP_MM, np.pi, 0.0, yaw]
 
-    def _solve(self, pose):
-        """Vendor (SDK) IK on the real arm, ours in the sim, which has no SDK."""
+    def _solve(self, pose, seed=None):
+        """Vendor (SDK) IK on the real arm, our numerical IK in the sim, which has no SDK.
+        seed: joint angles of a neighboring pose (e.g. the approach above a grasp), so the
+        numerical IK stays on that pose's wrist solution instead of flipping the wrist between them."""
         real = getattr(self.arm, "xarm", None) is not None
-        q = self.arm.get_ik_sdk(pose) if real else self.arm.get_ik(pose)
+        q = self.arm.get_ik_sdk(pose) if real else self.arm.get_ik_numerical(pose, q0=seed)
         return None if q is None else list(q)
 
     def _move(self, q):
@@ -269,8 +271,9 @@ class StateMachine:
         hover = self._hover_pose(x, y, hover_z, -yaw)
 
         # Solve everything before moving, so an unreachable pose never stops the arm halfway.
-        q_approach, q_grasp = self._solve(approach), self._solve(grasp)
-        q_hover = None if hover is None else self._solve(hover)
+        q_approach = self._solve(approach)
+        q_grasp = self._solve(grasp, seed=q_approach)
+        q_hover = None if hover is None else self._solve(hover, seed=q_approach)
         if q_approach is None or q_grasp is None or (hover is not None and q_hover is None):
             self.status_message = f"({x:.0f}, {y:.0f}) is unreachable - click another block."
             return
@@ -312,8 +315,9 @@ class StateMachine:
 
         hover = self._hover_pose(x, y, hover_z, -yaw)
 
-        q_approach, q_place = self._solve(approach), self._solve(place)
-        q_hover = None if hover is None else self._solve(hover)
+        q_approach = self._solve(approach)
+        q_place = self._solve(place, seed=q_approach)
+        q_hover = None if hover is None else self._solve(hover, seed=q_approach)
         if q_approach is None or q_place is None or (hover is not None and q_hover is None):
             self.status_message = f"({x:.0f}, {y:.0f}) is unreachable - click another spot."
             return

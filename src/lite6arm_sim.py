@@ -552,12 +552,13 @@ class SimArm:
             return None
         return IK_geometric(self.dh_params, pose)
 
-    def get_ik_numerical(self, pose):
+    def get_ik_numerical(self, pose, q0=None):
         # Student IK, numerical: seeded from the default (home) pose, not the
         # current one, so the same target always yields the same elbow-up answer.
+        # q0 seeds it elsewhere, e.g. from a neighboring pose, to stay on its wrist solution.
         if self.dh_params is None:
             return None
-        return IK_numerical(self.dh_params, pose, q0=Q_DEFAULT,
+        return IK_numerical(self.dh_params, pose, q0=Q_DEFAULT if q0 is None else q0,
                             joint_limits=self.joint_limits)
 
     def stop_link(self):
