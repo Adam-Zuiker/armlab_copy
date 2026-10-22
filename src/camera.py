@@ -760,6 +760,7 @@ class Camera:
 
     def find_blocks(self):
         self.block_detections = []
+        self.update_hsv_topdown()
         for contour in self.block_contours:
 
             (cx, cy), (w, h), angle = cv2.minAreaRect(contour)
@@ -817,16 +818,25 @@ class Camera:
                 return name
         return "unknown"
     
+    def update_hsv_topdown(self):
+        """HSV of a clean top-down copy of the camera image, for classify_color. The contours
+        are in top-down pixels, so the raw (unwarped) image would sample the wrong spot, and
+        workspace_frame has outlines and labels drawn on it."""
+        rgb = self.video_frame
+        if self.workspace_homography is not None:
+            height, width = rgb.shape[:2]
+            rgb = cv2.warpPerspective(rgb, self.workspace_homography, (width, height))
+        self.hsv_topdown = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+
     def classify_color(self, contour):
         mask = np.zeros(self.workspace_frame.shape[:2], np.uint8)
         cv2.drawContours(mask, [contour], -1, 255, thickness=cv2.FILLED)
 
         mask = cv2.erode(mask, np.ones((5, 5)))
+        if not mask.any():
+            return "unknown", (0, 0, 0)
 
-        # ai generated
-
-        hsv = cv2.cvtColor(self.video_frame, cv2.COLOR_RGB2HSV)
-        h, s, v = [int(np.median(ch[mask>0])) for ch in cv2.split(hsv)]
+        h, s, v = [int(np.median(ch[mask > 0])) for ch in cv2.split(self.hsv_topdown)]
 
         return self.hsv_to_color(h, s, v), (h,s,v)
 

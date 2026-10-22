@@ -22,11 +22,12 @@ BLOCK_H = {"big": 38.0, "small": 25.0}
 ROYGBV = ["red", "orange", "yellow", "green", "blue", "purple"]
 RANK = {color: i for i, color in enumerate(ROYGBV)}
 
-# Lines (mm): along y at x = LINE_X, red nearest the base. Large line 243 mm long,
-# small line 180 mm, both under the 300 mm limit.
+# Lines (mm): along y at x = LINE_X, red nearest the base. Large line 283 mm long,
+# small line 215 mm, both under the 300 mm limit. The far large slot, |y| = 425, is 10 mm
+# inside the arm's reach there.
 LINE_X = -50.0
-LINE_Y0 = 195.0                           # |y| of the red slot
-PITCH = {"big": 43.0, "small": 31.0}      # 5 mm / 6 mm gaps
+LINE_Y0 = 180.0                           # |y| of the red slot
+PITCH = {"big": 49.0, "small": 38.0}      # 11 mm / 13 mm gaps
 LINE_SIDE = {"big": -1.0, "small": 1.0}   # sign of y for each line
 
 # Carry blocks with the grasp point this high (mm): clears a held large block over a
