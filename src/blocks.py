@@ -27,11 +27,13 @@ def stack_error(z_bottom):
 
 
 def size_from_height(z_top):
-    """'big' or 'small' when only that cube size can have its top face at z_top (mm), else None.
-    E.g. a top at 50 mm is a small cube on a small cube: no stack puts a large cube's top there."""
-    fits = [size for size, edge in (("big", LARGE_MM), ("small", SMALL_MM))
-            if stack_error(z_top - edge) < STACK_TOL_MM]
-    return fits[0] if len(fits) == 1 else None
+    """'big' or 'small' when that cube size fits a top face at z_top (mm) clearly better than
+    the other, else None. E.g. a top at 50 mm is a small cube on a small cube: no stack puts a
+    large cube's top there. A clear margin keeps a height that reads a few mm off from flipping
+    the size."""
+    err = {size: stack_error(z_top - edge) for size, edge in (("big", LARGE_MM), ("small", SMALL_MM))}
+    best, other = sorted(err, key=err.get)
+    return best if err[best] < STACK_TOL_MM and err[other] - err[best] >= STACK_TOL_MM else None
 
 
 def wrap_yaw(yaw):

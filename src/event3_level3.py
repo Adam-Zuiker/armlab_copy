@@ -14,7 +14,6 @@ import time
 import cv2
 import numpy as np
 
-from blocks import STACK_TOL_MM, stack_error
 from kinematics import Q_DEFAULT
 
 BLOCK_H = {"big": 38.0, "small": 25.0}
@@ -35,8 +34,9 @@ HOVER_Z = 3 * BLOCK_H["big"] + BLOCK_H["big"] / 2 + 25.0
 
 # What makes a detection a cube rather than a distractor.
 SIDE_TOL_MM = 7.0      # top face no smaller than a cube's edge length less this,
-MERGE_TOL_MM = 12.0    # and no bigger than it plus this: an off-center cube underneath can merge into the outline
+MERGE_TOL_MM = 10.0    # and no bigger than it plus this: an off-center cube underneath can merge into the outline
 MIN_FILL = 0.85        # contour area / its min-area rectangle: square ~1, circle 0.79, triangle 0.5
+HEIGHT_TOL_MM = 15.0   # it stands this close to the board or the top of a two-cube stack, or between
 
 # Jaw clearance when picking: a cube can be gripped from two directions 90 deg apart,
 # take the one that keeps the fingers farthest from the neighbors.
@@ -53,20 +53,28 @@ def slot(size, color):
     return LINE_X, LINE_SIDE[size] * (LINE_Y0 + PITCH[size] * RANK[color])
 
 
-def is_cube(d):
-    """True for a detection that looks like one of the 12 cubes, False for a distractor."""
+def reject_reason(d):
+    """Why detection d is not one of the 12 cubes (a distractor), or None if it is one."""
     if d["color"] not in RANK:
-        return False
+        return f"color {d['color']}"
     side = BLOCK_H[d["size"]]
-    if not -SIDE_TOL_MM <= d.get("side_mm", side) - side <= MERGE_TOL_MM:
-        return False
-    if stack_error(d["world"][2] - side) >= STACK_TOL_MM:   # must stand on the board or on cubes
-        return False
+    side_mm = d.get("side_mm", side)
+    if not -SIDE_TOL_MM <= side_mm - side <= MERGE_TOL_MM:
+        return f"top face {side_mm:.0f} mm wide for a {d['size']} cube"
+    below = d["world"][2] - side                 # top of whatever the block stands on
+    if not -HEIGHT_TOL_MM < below < 2 * BLOCK_H["big"] + HEIGHT_TOL_MM:
+        return f"top at {d['world'][2]:.0f} mm, too {'low' if below < 0 else 'high'} for a {d['size']} cube"
     if "contour" in d:                           # the sim reports cubes only, without contours
         _, (w, h), _ = cv2.minAreaRect(d["contour"])
-        if cv2.contourArea(d["contour"]) < MIN_FILL * w * h:
-            return False
-    return True
+        fill = cv2.contourArea(d["contour"]) / max(w * h, 1e-6)
+        if fill < MIN_FILL:
+            return f"outline {fill:.0%} of its rectangle, not square"
+    return None
+
+
+def is_cube(d):
+    """True for a detection that looks like one of the 12 cubes, False for a distractor."""
+    return reject_reason(d) is None
 
 
 class Event2Level3:
@@ -114,11 +122,23 @@ class Event2Level3:
         alt = yaw + np.pi / 2 if yaw < 0 else yaw - np.pi / 2
         return alt if clearance(alt) > clearance(yaw) else yaw
 
-    def _summary(self):
+    def _summary(self, seen=None):
+        """Result so far. With seen (the last detections), also what was left in front and why."""
         msg = f"{len(self.filled)} of 12 cubes lined up"
         if self.skipped:
             msg += ", skipped " + ", ".join(f"{c} {s}" for c, s in sorted(self.skipped))
-        return msg + "."
+        msg += "."
+        if seen is None:
+            return msg
+        if not seen:
+            return msg + " The camera sees no blocks in front of the arm - is it calibrated?"
+        left = [(d, reject_reason(d)) for d in seen if not is_cube(d)]
+        for d, why in left:
+            x, y, z = d["world"][:3]
+            print(f"Event 2 L3: left the {d['color']} {d['size']} detection at ({x:.0f}, {y:.0f}, {z:.0f}) - {why}")
+        if left:
+            msg += f" Left {len(left)} detection(s) as distractors - reasons printed in the terminal."
+        return msg
 
     def step(self):
         """Line up one cube. Returns a message when the event is finished, otherwise None."""
@@ -143,7 +163,7 @@ class Event2Level3:
             todo = self._todo(seen)
         if not todo:
             sm._move(list(Q_DEFAULT))
-            return "Event 2 L3 done - " + self._summary()
+            return "Event 2 L3 done - " + self._summary(seen)
 
         d = max(todo, key=lambda d: d["world"][2])   # highest first: stacks come apart from the top
         key = (d["color"], d["size"])
