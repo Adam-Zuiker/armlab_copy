@@ -780,6 +780,11 @@ class Camera:
             color, hsv = self.classify_color(contour)
 
             p_world = self.block_world_position(cx, cy)
+            # Height from the same table-plane height map the contours came from: a slightly
+            # tilted extrinsic calibration made the extrinsic z read 12-20 mm low.
+            h = self.height_at(cx, cy)
+            if h is not None:
+                p_world[2] = h
             # A small block slightly off-center on another small block merges with it into one
             # outline wide enough to look big: trust the height when only one size fits it.
             size = size_from_height(p_world[2]) or size
@@ -825,6 +830,16 @@ class Camera:
 
         return self.hsv_to_color(h, s, v), (h,s,v)
 
+
+    def height_at(self, cx, cy, win=3):
+        """Height (mm) above the table plane at top-down pixel (cx, cy), the median of a small
+        patch so one bad pixel can't ruin it. None if the patch has no valid depth."""
+        u, v = int(cx), int(cy)
+        patch = self.depth_frame_topdown_raw[max(v - win, 0):v + win + 1, max(u - win, 0):u + win + 1]
+        valid = patch[patch > 0]
+        if valid.size == 0:
+            return None
+        return float((self.table_depth_raw - np.median(valid)) * self.depth_scale_mm)
 
     def block_world_position(self, cx, cy):
         uv = self.workspace_pixel_to_image(cx, cy)
