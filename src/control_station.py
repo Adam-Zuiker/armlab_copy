@@ -10,11 +10,14 @@ from PyQt5.QtGui import QImage, QKeySequence, QPixmap
 from PyQt5.QtWidgets import QApplication, QMainWindow, QShortcut, QWidget
 
 from camera import Camera, VideoThread
+from camera_sim import SimCamera
 from lite6arm import ArmThread, Lite6Arm, JOINT_NAMES
 from lite6arm_sim import SimArm, SimArmThread
 from state_machine import StateMachine, StateMachineThread
 from ui.layout import Ui_MainWindow
 from ui.style import STYLE
+
+EVENT1L2_SPEED_PCT = 80   # Event 1 L2 is timed: the button sets the speed slider to this
 
 
 class Gui(QMainWindow):
@@ -27,7 +30,7 @@ class Gui(QMainWindow):
 
         # --- Hardware ---
         self.arm_mode = arm_mode  # "sim": MuJoCo sim over LCM; "real": arm hardware
-        self.camera = Camera()
+        self.camera = SimCamera() if arm_mode == "sim" else Camera()
         self.arm    = SimArm() if arm_mode == "sim" else Lite6Arm()
         self.sm     = StateMachine(self.arm, self.camera)
 
@@ -55,6 +58,15 @@ class Gui(QMainWindow):
         self.ui.btn_sleep_arm.clicked.connect(self._sleep_arm)
         self.ui.btn_calibrate.clicked.connect(partial(self.sm.set_next_state, "calibrate"))
         self.ui.chk_pick_place.stateChanged.connect(self._pick_place_chk)
+        # The sim board reset and the events run from the custom buttons (ui/layout.py)
+        btn_reset_board, self.ui.btn_event1, self.ui.btn_event1l2 = self.ui.custom_buttons[:3]
+        btn_reset_board.setText("Reset Board (Sim)")
+        self.ui.btn_event1.setText("Event 1")
+        self.ui.btn_event1l2.setText("Event 1 L2")
+        btn_reset_board.setEnabled(arm_mode == "sim")
+        self.ui.btn_event1.setEnabled(True)
+        self.ui.btn_event1l2.setEnabled(True)
+        btn_reset_board.clicked.connect(partial(self.sm.set_next_state, "reset_board"))
         self.ui.btn_event1.clicked.connect(self._event1)
         self.ui.btn_event1l2.clicked.connect(self._event1l2)
         self.ui.btn_add_wp.clicked.connect(partial(self.sm.set_next_state, "add_waypoint"))
@@ -485,9 +497,10 @@ class Gui(QMainWindow):
         self.sm.set_next_state("event1")
 
     def _event1l2(self):
-        """Run Event 1 (automatic block sorting)."""
+        """Run Event 1 Level 2 (automatic block sorting)."""
         self.ui.chk_directcontrol.setChecked(False)
         self.ui.chk_pick_place.setChecked(False)     # click pick & place would fight over the arm
+        self.ui.sldrMoveTime.setValue(EVENT1L2_SPEED_PCT)   # sets the arm speed via _speed_slider_change
         self.sm.set_next_state("event1l2")
 
     def _initial_pose(self):

@@ -8,11 +8,12 @@ from PyQt5.QtCore import QThread, pyqtSignal
 import numpy as np
 
 from kinematics import Q_DEFAULT
+from camera_sim import reset_board_event0
 from event1 import Event1
 from event1_level2 import Event1Level2
 
 # --- pick & place geometry (mm) ---
-FLANGE_TO_GRASP_MM = 110.0      # grasp point is 85 mm below the flange along the tool axis
+FLANGE_TO_GRASP_MM = 85.0      # grasp point is 85 mm below the flange along the tool axis
 APPROACH_CLEARANCE_MM = 100.0  # flange stays this far above the grasp/place pose when moving sideways
 PLACE_DROP_MM = 5.0            # release the block slightly above the surface, not pressed into it
 BLOCK_H = {"big": 38.0, "small": 25.0}
@@ -40,6 +41,7 @@ class StateMachine:
             "check_3d":          self.check_3d,
             "event1":            self.event1,
             "event1l2":          self.event1l2,
+            "reset_board":       self.reset_board,
         }
 
         self.waypoints = []
@@ -250,7 +252,7 @@ class StateMachine:
             return
 
         print(f"Pick: {size} block at ({x:.0f}, {y:.0f}, {z_top:.0f}), yaw {np.degrees(yaw):.0f} deg")
-        self.arm.open_gripper(wait=True)
+        self.arm.open_gripper()                      # queued: opens on the way to the approach, no dwell
         self._move(q_approach)                       # above the block
         self._move(q_grasp)                          # straight down
         self.arm.close_gripper(wait=True)
@@ -262,7 +264,8 @@ class StateMachine:
         self.camera.new_click = False                # ignore clicks made while the arm was moving
         self.status_message = "Holding block - click where to place it."
 
-    def _place(self, target):
+    def _place(self, target, go_home=True):
+        """go_home=False stays above the place, for events that sense again from there."""
         x, y, z_surface = target                     # the clicked point is the surface to put it on
         yaw = self.held_yaw                          # on the table: keep the angle it was picked at
         d = self._snap_to_block(x, y)
@@ -286,7 +289,8 @@ class StateMachine:
         self._move(q_place)
         self.arm.open_gripper(wait=True)
         self._move(q_approach)
-        self._move(list(Q_DEFAULT))                  # out of the camera's view for the next click
+        if go_home:
+            self._move(list(Q_DEFAULT))              # out of the camera's view for the next click
 
         self.holding_block = False
         self.camera.new_click = False
@@ -324,6 +328,14 @@ class StateMachine:
             done_message = self.event1l2_task.step()
             if done_message:
                 self._go_idle(done_message)
+
+    def reset_board(self):
+        """Sim only: arm to the initial pose, then blocks back to the Event 0 layout."""
+        try:
+            reset_board_event0(self.arm, self.camera)
+            self._go_idle("Board reset.")
+        except RuntimeError as exc:
+            self._go_idle(f"Reset Board failed: {exc}")
 
     def check_3d(self):
         _, self.status_message = self.camera.check_3d_point(self.arm.get_ee_pose_sdk())

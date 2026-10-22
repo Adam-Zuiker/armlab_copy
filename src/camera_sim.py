@@ -21,6 +21,7 @@ if _MUJOCO_SIM_DIR not in sys.path:
     sys.path.insert(0, _MUJOCO_SIM_DIR)
 
 import lcm
+import numpy as np
 from lite6_sim.lcm_msgs import sim_reset_t, sim_world_t
 
 from blocks import Block
@@ -62,6 +63,21 @@ class SimCamera(Camera):
             return []
         return [Block(color, size * 1000.0, pos[0] * 1000.0, pos[1] * 1000.0, pos[2] * 1000.0, yaw)
                 for color, size, pos, yaw in zip(msg.color, msg.size, msg.pos, msg.yaw)]
+
+    @property
+    def block_detections(self):
+        """detect_blocks() in the dict format of Camera.find_blocks(), for the state machine's events."""
+        return [{
+            "size": "big" if b.is_large else "small",
+            "side_mm": b.size,
+            "angle_degree": (-np.degrees(b.yaw)) % 90.0,
+            "color": "purple" if b.color == "violet" else b.color,
+            "world": np.array([b.x, b.y, b.z + b.size / 2]),   # top-face centre, like the real camera
+        } for b in self.detect_blocks()]
+
+    @block_detections.setter
+    def block_detections(self, _):
+        pass   # Camera.__init__ / find_blocks() assign it; the sim's blocks come from LCM instead
 
     def reset_board(self, keyframe):
         """Sim only: put every block where keyframe (armlab_scene.xml) places it."""

@@ -110,6 +110,7 @@ class Camera:
         self.check_3d_records = []
         self.board_check_requested = False
         self.block_contours = []
+        self.block_detections = []
 
         if rs is None or len(rs.context().query_devices()) == 0:
             print("WARNING: No RealSense device found - running without video.")
